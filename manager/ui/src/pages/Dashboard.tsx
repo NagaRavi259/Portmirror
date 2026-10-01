@@ -1,8 +1,8 @@
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Cable, Cpu, Gauge, Info, Network, Pencil, Plus, Search, Timer, Trash2, Zap } from "lucide-react";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Sparkline, TimeChart } from "../components/Charts";
-import { Card, Empty, ProtoBadge, Segmented, StatusDot, Switch, cx } from "../components/ui";
-import { Api, Forward, History, Snapshot } from "../lib/api";
+import { Card, Empty, PortLink, ProtoBadge, Segmented, StatusDot, Switch, cx } from "../components/ui";
+import { Api, Forward, History, Snapshot, SystemInfo } from "../lib/api";
 import { bps, bytes, count, ports, rate, until } from "../lib/format";
 import { go } from "../lib/router";
 import { LIVE_WINDOW_S, RANGES, Range } from "../lib/ranges";
@@ -71,8 +71,8 @@ export function forwardState(f: Forward): "up" | "down" | "off" | "unknown" {
   return f.health?.state ?? "unknown";
 }
 
-export function Dashboard({ forwards, snap, loading, onNew, onEdit, onRemove, onToggle }: {
-  forwards: Forward[]; snap: Snapshot | null; loading: boolean;
+export function Dashboard({ forwards, snap, loading, system, onNew, onEdit, onRemove, onToggle }: {
+  forwards: Forward[]; snap: Snapshot | null; loading: boolean; system: SystemInfo | null;
   onNew: () => void; onEdit: (f: Forward) => void; onRemove: (f: Forward) => void; onToggle: (f: Forward, on: boolean) => void;
 }) {
   const [q, setQ] = useState("");
@@ -192,7 +192,7 @@ export function Dashboard({ forwards, snap, loading, onNew, onEdit, onRemove, on
                     <div className="truncate font-medium text-ink-900">{f.name}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[12px]">
                       <ProtoBadge protocol={f.protocol} />
-                      <span className="font-semibold text-ink-900">:{ports(f.listen_port, f.listen_port_end)}</span>
+                      <PortLink forward={f} gwLanIp={system?.gw_lan_ip} className="font-semibold text-ink-900 hover:text-accent-600 hover:underline" />
                       <ArrowRight size={12} className="text-ink-300" />
                       <span className="text-ink-700">{f.target_ip}:{ports(f.target_port, f.target_port_end)}</span>
                     </div>
@@ -245,7 +245,7 @@ export function Dashboard({ forwards, snap, loading, onNew, onEdit, onRemove, on
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-2 font-mono text-[12.5px]">
                           <ProtoBadge protocol={f.protocol} />
-                          <span className="font-semibold text-ink-900">:{ports(f.listen_port, f.listen_port_end)}</span>
+                          <PortLink forward={f} gwLanIp={system?.gw_lan_ip} className="font-semibold text-ink-900 hover:text-accent-600 hover:underline" />
                           <ArrowRight size={13} className="text-ink-300" />
                           <span className="text-ink-700">{f.target_ip}:{ports(f.target_port, f.target_port_end)}</span>
                         </div>

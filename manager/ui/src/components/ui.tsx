@@ -1,6 +1,7 @@
-import { X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { ReactNode, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { forwardUrl, ports } from "../lib/format";
 
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(" ");
@@ -146,5 +147,23 @@ export function Drawer({ title, subtitle, onClose, children, footer }: {
       </aside>
     </div>,
     document.body,
+  );
+}
+
+
+/** The local port, as a link that opens the forward in a new tab when there's somewhere
+ * meaningful to send the browser (see `forwardUrl`) - otherwise, just the plain port text. */
+export function PortLink({ forward, gwLanIp, className }: {
+  forward: { protocol: string; enabled: boolean; expired: boolean; listen_port: number; listen_port_end: number | null };
+  gwLanIp: string | undefined | null; className?: string;
+}) {
+  const label = `:${ports(forward.listen_port, forward.listen_port_end)}`;
+  const url = forwardUrl(forward, gwLanIp);
+  if (!url) return <span className={className}>{label}</span>;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+      className={cx(className, "inline-flex items-center gap-1")} title={`Open ${url} in a new tab`}>
+      {label}<ExternalLink size={11} className="opacity-60" />
+    </a>
   );
 }

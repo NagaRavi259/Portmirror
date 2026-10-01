@@ -220,6 +220,7 @@ async def system(_: str = Depends(who)):
         "last_apply": manager.last_apply, "hold": config.HOLD_FILE.exists(),
         "history_retention_days": config.HISTORY_RETENTION_S / 86400 if config.HISTORY_RETENTION_S else None,
         "audit_retention_days": config.AUDIT_RETENTION_S / 86400 if config.AUDIT_RETENTION_S else None,
+        "connection_log_retention_days": config.CONNECTION_LOG_RETENTION_S / 86400 if config.CONNECTION_LOG_RETENTION_S else None,
         "storage": store.storage_stats(),
         "db_bytes": config.DB_PATH.stat().st_size if config.DB_PATH.exists() else 0,
     }
@@ -234,6 +235,20 @@ async def reapply(actor: str = Depends(who)):
 @app.get("/api/audit")
 async def audit(limit: int = Query(200, le=1000), before: int | None = None, _: str = Depends(who)):
     return store.audit_log(limit, before)
+
+
+@app.get("/api/connection-log")
+async def connection_log(forward_id: int | None = None, client_ip: str | None = None, since: str | None = None,
+                         limit: int = Query(200, le=1000), before: int | None = None, _: str = Depends(who)):
+    """Real connections the kernel has observed - who talked to which forward, when, and how much
+    data moved - as opposed to /api/audit, which is administrative actions (who changed what)."""
+    return store.connection_log(forward_id=forward_id, client_ip=client_ip, since=since, limit=limit, before_id=before)
+
+
+@app.get("/api/connection-log/summary")
+async def connection_log_summary(group_by: str = Query("client", pattern="^(client|forward)$"),
+                                 since: str | None = None, limit: int = Query(50, le=500), _: str = Depends(who)):
+    return store.connection_log_summary(group_by=group_by, since=since, limit=limit)
 
 
 @app.get("/api/export")

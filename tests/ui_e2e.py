@@ -116,6 +116,21 @@ def main():
             return "7 seeded forwards listed"
         check("UI-DASHBOARD", "Dashboard lists the seeded forwards with live KPIs", dashboard)
 
+        # ---- clickable port link ---------------------------------------------------------
+        def port_link():
+            row = page.locator("tbody tr", has_text="A - HTTP")
+            link = row.get_by_role("link", name=re.compile(r"^:80"))
+            expect(link).to_have_attribute("href", f"http://{GW}:80/")
+            expect(link).to_have_attribute("target", "_blank")
+            with ctx.expect_page() as new_page_info:
+                link.click()
+            new_page = new_page_info.value
+            new_page.wait_for_load_state()
+            body_text = new_page.locator("body").inner_text()
+            new_page.close()
+            return f"opened {new_page.url} in a new tab, body: {body_text[:60]!r}"
+        check("UI-PORT-LINK", "Clicking an enabled forward's port opens it in a new tab", port_link)
+
         # ---- KPI hover help ------------------------------------------------------------
         def kpi_help():
             expected = {"Live": "open through the gateway", "In": "from your local network out", "Out": "coming back from the remote",
@@ -257,6 +272,24 @@ def main():
             page.screenshot(path=f"{SHOTS}/09-audit.png")
             return "create/delete entries visible"
         check("UI-AUDIT", "Audit log shows the UI's own changes", audit)
+
+        def connections():
+            urllib.request.urlopen(f"http://{GW}:80/", timeout=3).read()   # fresh traffic to log
+            page.goto(URL + "/#/connections")
+            expect(page.get_by_role("heading", name="Connections")).to_be_visible()
+            expect(page.locator("tbody tr").first).to_be_visible(timeout=10000)
+            expect(page.get_by_role("table").get_by_text("A - HTTP")).to_be_visible(timeout=10000)
+            page.get_by_label("Filter by client IP").fill("no-such-client")
+            expect(page.get_by_text("No connections recorded yet")).to_be_visible()
+            page.get_by_label("Filter by client IP").fill("")
+            page.get_by_role("button", name="By client").click()
+            expect(page.locator("thead th", has_text="Client")).to_be_visible(timeout=10000)
+            expect(page.locator("tbody tr").first).to_be_visible(timeout=10000)
+            page.get_by_role("button", name="By forward").click()
+            expect(page.locator("thead th", has_text="Forward")).to_be_visible(timeout=10000)
+            page.screenshot(path=f"{SHOTS}/09b-connections.png", full_page=True)
+            return "recent/client/forward views all populated, client-IP filter narrows the list"
+        check("UI-CONNECTIONS", "Connections page shows sessions and filters by client/forward", connections)
 
         def settings():
             page.goto(URL + "/#/settings")

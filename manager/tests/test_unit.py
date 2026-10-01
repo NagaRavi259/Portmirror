@@ -4,6 +4,7 @@ import asyncio
 import os
 import shutil
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -335,3 +336,175 @@ def test_cli_permission_error_is_reported_cleanly(monkeypatch, capsys):
     assert rc == 1
     assert "permission denied" in err.lower() and "sudo" in err.lower()
     assert "Traceback" not in err
+
+
+# ---- connection log (real traffic, separate from the audit/admin-action log) -------
+def test_connection_log_open_close_and_query(store):
+    store.record_connection_opens([(1, "tcp", "192.168.88.67", 5000, "10.0.0.12", 80, "2026-01-01T00:00:00+00:00")])
+    rows = store.connection_log(forward_id=1)
+    assert len(rows) == 1 and rows[0]["ended_at"] is None and rows[0]["bytes_in"] == 0
+
+    store.record_connection_closes([(300, 5000, 4, 5, "2026-01-01T00:00:05+00:00",
+                                     1, "tcp", "192.168.88.67", 5000, "2026-01-01T00:00:00+00:00")])
+    rows = store.connection_log(forward_id=1)
+    assert rows[0]["ended_at"] == "2026-01-01T00:00:05+00:00"
+    assert (rows[0]["bytes_in"], rows[0]["bytes_out"]) == (300, 5000)
+
+
+def test_connection_log_filters_by_client_and_forward(store):
+    store.record_connection_opens([
+        (1, "tcp", "192.168.88.67", 1, "10.0.0.12", 80, "2026-01-01T00:00:00+00:00"),
+        (2, "tcp", "192.168.88.23", 2, "10.0.0.13", 443, "2026-01-01T00:00:00+00:00"),
+    ])
+    assert len(store.connection_log(forward_id=1)) == 1
+    assert len(store.connection_log(client_ip="192.168.88.23")) == 1
+    assert len(store.connection_log()) == 2
+
+
+def test_close_orphaned_connections_only_touches_open_rows(store):
+    store.record_connection_opens([(1, "tcp", "192.168.88.67", 1, "10.0.0.12", 80, "2026-01-01T00:00:00+00:00")])
+    store.record_connection_opens([(1, "tcp", "192.168.88.67", 2, "10.0.0.12", 80, "2026-01-01T00:00:00+00:00")])
+    store.record_connection_closes([(10, 20, 1, 1, "2026-01-01T00:00:01+00:00",
+                                     1, "tcp", "192.168.88.67", 1, "2026-01-01T00:00:00+00:00")])
+    n = store.close_orphaned_connections("2026-01-01T00:05:00+00:00")
+    assert n == 1   # only the still-open one (sport=2); the already-closed one is untouched
+    rows = {r["client_port"]: r for r in store.connection_log(forward_id=1)}
+    assert rows[1]["ended_at"] == "2026-01-01T00:00:01+00:00"   # unchanged
+    assert rows[2]["ended_at"] == "2026-01-01T00:05:00+00:00"   # closed by the orphan sweep
+
+
+def test_connection_log_summary_groups_and_sorts_by_total_bytes(store):
+    store.record_connection_opens([
+        (1, "tcp", "192.168.88.67", 1, "10.0.0.12", 80, "2026-01-01T00:00:00+00:00"),
+        (1, "tcp", "192.168.88.67", 2, "10.0.0.12", 80, "2026-01-01T00:00:00+00:00"),
+        (1, "tcp", "192.168.88.23", 3, "10.0.0.12", 80, "2026-01-01T00:00:00+00:00"),
+    ])
+    store.record_connection_closes([
+        (100, 100, 1, 1, "t", 1, "tcp", "192.168.88.67", 1, "2026-01-01T00:00:00+00:00"),
+        (100, 100, 1, 1, "t", 1, "tcp", "192.168.88.67", 2, "2026-01-01T00:00:00+00:00"),
+        (10000, 10000, 1, 1, "t", 1, "tcp", "192.168.88.23", 3, "2026-01-01T00:00:00+00:00"),
+    ])
+    by_client = store.connection_log_summary(group_by="client")
+    assert by_client[0]["key"] == "192.168.88.23" and by_client[0]["sessions"] == 1   # most bytes first
+    assert by_client[1]["key"] == "192.168.88.67" and by_client[1]["sessions"] == 2
+
+
+def test_purge_connection_log_keeps_open_rows_regardless_of_age(store):
+    store.record_connection_opens([(1, "tcp", "1.2.3.4", 1, "10.0.0.12", 80, "2020-01-01T00:00:00+00:00")])
+    assert store.purge_connection_log("2026-01-01T00:00:00+00:00") == 0   # still open - never purged
+    store.record_connection_closes([(1, 1, 1, 1, "2020-01-01T00:00:01+00:00",
+                                     1, "tcp", "1.2.3.4", 1, "2020-01-01T00:00:00+00:00")])
+    assert store.purge_connection_log("2026-01-01T00:00:00+00:00") == 1
+    assert store.connection_log() == []
+
+
+def test_connection_log_retention_defaults_to_30_days_not_forever(monkeypatch):
+    monkeypatch.delenv("PM_CONNECTION_LOG_RETENTION_DAYS", raising=False)
+    import importlib
+    from app import config as config_module
+    importlib.reload(config_module)
+    assert config_module.CONNECTION_LOG_RETENTION_S == 30 * 86400
+    monkeypatch.setenv("PM_CONNECTION_LOG_RETENTION_DAYS", "0")
+    importlib.reload(config_module)
+    assert config_module.CONNECTION_LOG_RETENTION_S is None
+    monkeypatch.delenv("PM_CONNECTION_LOG_RETENTION_DAYS", raising=False)
+    importlib.reload(config_module)   # restore for any later test relying on module state
+
+
+# ---- collector: connection-log tracking (open on first sight, close on disappearance) ----
+def _flow(proto="tcp", src="192.168.88.67", sport=5000, reply_src="10.0.0.12", reply_sport=80,
+         bytes_in=0, bytes_out=0, pkts_in=0, pkts_out=0, state="ESTABLISHED"):
+    return engine.Flow(proto=proto, state=state, ttl=60, src=src, dst="192.168.88.8", sport=sport,
+                       dport=80, reply_src=reply_src, reply_sport=reply_sport,
+                       pkts_in=pkts_in, bytes_in=bytes_in, pkts_out=pkts_out, bytes_out=bytes_out)
+
+
+def test_collector_tracks_a_connection_from_open_to_close(store):
+    from app.collector import Collector
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+
+    c._track_connection_log({1: [_flow(bytes_in=100, bytes_out=200)]}, time.time())
+    rows = store.connection_log(forward_id=1)
+    assert len(rows) == 1 and rows[0]["ended_at"] is None
+
+    c._track_connection_log({1: [_flow(bytes_in=500, bytes_out=900)]}, time.time())  # still open, bytes growing
+    assert len(store.connection_log(forward_id=1)) == 1   # no duplicate row
+
+    c._track_connection_log({}, time.time())   # the flow is gone - conntrack entry expired
+    rows = store.connection_log(forward_id=1)
+    assert rows[0]["ended_at"] is not None
+    assert (rows[0]["bytes_in"], rows[0]["bytes_out"]) == (500, 900)   # the last values seen before it closed
+
+
+def test_collector_tracks_two_concurrent_clients_independently(store):
+    from app.collector import Collector
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+    c._track_connection_log({1: [_flow(src="192.168.88.67", sport=1), _flow(src="192.168.88.23", sport=2)]}, time.time())
+    assert len(store.connection_log(forward_id=1)) == 2
+    c._track_connection_log({1: [_flow(src="192.168.88.67", sport=1)]}, time.time())   # only .23 closed
+    rows = {r["client_ip"]: r for r in store.connection_log(forward_id=1)}
+    assert rows["192.168.88.67"]["ended_at"] is None
+    assert rows["192.168.88.23"]["ended_at"] is not None
+
+
+def test_collector_closes_orphaned_sessions_on_startup(store):
+    from app.collector import Collector
+    store.record_connection_opens([(1, "tcp", "1.2.3.4", 1, "10.0.0.12", 80, "2020-01-01T00:00:00+00:00")])
+    Collector(store, lambda: [], type("P", (), {"status": {}})())   # constructing it runs the sweep
+    rows = store.connection_log(forward_id=1)
+    assert rows[0]["ended_at"] is not None
+
+
+def test_collector_closes_session_on_time_wait_not_waiting_for_conntrack_removal(store):
+    """Regression test: a finished TCP connection lingers in conntrack through TIME_WAIT for
+    minutes after the real transfer is over. The session must close the moment the flow leaves
+    the live states (matching the dashboard's own is_live()), not whenever conntrack eventually
+    forgets about it - and the TIME_WAIT entry's own byte counts (still accurate at that point)
+    must be used, not stale ones from the last live observation."""
+    from app.collector import Collector
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+
+    c._track_connection_log({1: [_flow(state="ESTABLISHED", bytes_in=100, bytes_out=200)]}, time.time())
+    assert store.connection_log(forward_id=1)[0]["ended_at"] is None
+
+    # still present in conntrack, but TIME_WAIT now - and conntrack recorded a bit more data first
+    c._track_connection_log({1: [_flow(state="TIME_WAIT", bytes_in=150, bytes_out=250)]}, time.time())
+    rows = store.connection_log(forward_id=1)
+    assert rows[0]["ended_at"] is not None, "session must close as soon as the flow leaves the live states"
+    assert (rows[0]["bytes_in"], rows[0]["bytes_out"]) == (150, 250), "must use TIME_WAIT's own accurate counts"
+
+
+def test_collector_logs_a_connection_that_finishes_within_one_tick(store):
+    """Regression test: on a fast LAN, a short request can go from not-existing to ESTABLISHED to
+    TIME_WAIT entirely between two 1s polls, so the very first (and only) observation of it is
+    already non-live. It must still be logged - opened and closed in that same tick, using its own
+    already-final byte counts - rather than being silently dropped because it was never seen live."""
+    from app.collector import Collector
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+
+    c._track_connection_log({1: [_flow(state="TIME_WAIT", bytes_in=80, bytes_out=120)]}, time.time())
+    rows = store.connection_log(forward_id=1)
+    assert len(rows) == 1, "a flow first seen already past-live must still produce a row"
+    assert rows[0]["ended_at"] is not None, "it must be closed immediately, not left open"
+    assert (rows[0]["bytes_in"], rows[0]["bytes_out"]) == (80, 120)
+
+
+def test_collector_does_not_relog_a_flow_lingering_in_time_wait(store):
+    """Regression test: after a connection closes, its conntrack entry lingers in TIME_WAIT for a
+    while. Without remembering that it was already logged, the same flow would look "new" again on
+    every following tick for as long as it lingers, producing a duplicate open+close row each second."""
+    from app.collector import Collector
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+
+    c._track_connection_log({1: [_flow(state="TIME_WAIT", bytes_in=80, bytes_out=120)]}, time.time())
+    assert len(store.connection_log(forward_id=1)) == 1
+
+    # same flow, still lingering in TIME_WAIT a second later - must not produce another row
+    c._track_connection_log({1: [_flow(state="TIME_WAIT", bytes_in=80, bytes_out=120)]}, time.time())
+    c._track_connection_log({1: [_flow(state="TIME_WAIT", bytes_in=80, bytes_out=120)]}, time.time())
+    assert len(store.connection_log(forward_id=1)) == 1, "a lingering TIME_WAIT entry must not be logged twice"
+
+    # once it actually vanishes from conntrack, a later flow reusing the same client port is new
+    c._track_connection_log({}, time.time())
+    c._track_connection_log({1: [_flow(state="ESTABLISHED", bytes_in=10, bytes_out=20)]}, time.time())
+    assert len(store.connection_log(forward_id=1)) == 2, "a genuinely new connection must still be tracked"

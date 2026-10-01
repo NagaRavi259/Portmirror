@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -69,6 +70,12 @@ class Collector:
         self.acc: dict[int, list[int]] = defaultdict(lambda: [0, 0, 0, 0, 0, 0])  # new,bin,bout,pin,pout,live_max
         self.started = time.time()
         self.version = 0   # bumped by the manager when forwards change
+        self.open_sessions: dict[tuple, dict] = {}   # (fid, proto, src, sport) -> connection_log bookkeeping
+        self.closed_keys: set[tuple] = set()   # already logged as closed but still lingering in conntrack (e.g. TIME_WAIT)
+        n = self.store.close_orphaned_connections(datetime.now(timezone.utc).isoformat())
+        if n:
+            log.warning("closed %d connection-log rows left open by a previous run (likely a crash)", n)
+        self.last_conn_purge = 0.0
 
     # ------------------------------------------------------------------
     async def run(self):
@@ -108,6 +115,7 @@ class Collector:
             if f and fl.dst == str(config.GW_LAN_IP) and fl.reply_src == str(f.target_ip):
                 by_fid[f.id].append(fl)
         self.flows_by_fid = by_fid
+        self._track_connection_log(by_fid, now)
 
         fw_stats, g = {}, defaultdict(float)
         for f in forwards:
@@ -232,10 +240,75 @@ class Collector:
         self.minute = minute
         try:
             self.store.write_rollups(rows)
-            if minute % 60 == 0 and config.HISTORY_RETENTION_S:
-                self.store.purge_rollups(int(now) - config.HISTORY_RETENTION_S)
+            if minute % 60 == 0:
+                if config.HISTORY_RETENTION_S:
+                    self.store.purge_rollups(int(now) - config.HISTORY_RETENTION_S)
+                if config.CONNECTION_LOG_RETENTION_S:
+                    cutoff = datetime.fromtimestamp(now - config.CONNECTION_LOG_RETENTION_S, timezone.utc).isoformat()
+                    self.store.purge_connection_log(cutoff)
         except Exception:
             log.exception("rollup write failed")
+
+    def _track_connection_log(self, by_fid: dict, now: float):
+        """Open a connection-log row the first time a flow is seen *in any state*, and close it the
+        moment it's no longer live - using the same `is_live()` test as the dashboard's own
+        live-connection count, not mere presence in conntrack. A finished TCP connection lingers in
+        conntrack through TIME_WAIT for a couple of minutes by default; without the live-state check,
+        a session would be reported as still "open" (with its real duration badly inflated) for that
+        whole lingering period after the actual transfer already finished.
+
+        Opening must still key off *any* appearance, not just a live one: on a fast local network, a
+        short request can go from not-existing to ESTABLISHED to TIME_WAIT entirely between two 1 s
+        polls, so the first (and only) observation of it may already be non-live. Keying the open off
+        `is_live()` too would silently drop every connection that happens to finish within one polling
+        interval - a real bug caught by testing against actual traffic, not synthetic flows. Such a
+        connection is opened and closed within the very same tick instead, using its own already-final
+        byte counts (conntrack keeps a flow's counters accurate right up until the entry is actually
+        removed, even once non-live, and only a flow that vanishes without any such observation falls
+        back to the last counts seen while it was live).
+
+        A connection stays in conntrack, lingering in TIME_WAIT, for a while after it's closed and
+        logged - it would otherwise look "new" again on every following tick for as long as it
+        lingers, producing a duplicate open+close row each second (caught, again, by watching real
+        traffic rather than trusting synthetic single-tick test fixtures). `closed_keys` remembers
+        which already-logged flows are still merely lingering so they're not reopened, and is pruned
+        of any key that actually vanishes from conntrack, so a later, genuinely new connection reusing
+        the same client port is still tracked correctly.
+
+        Writes are batched once per tick, regardless of how many connections opened or closed, to keep
+        this cheap even under heavy churn."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        all_flows = {(fid, fl.proto, fl.src, fl.sport): fl for fid, flows in by_fid.items() for fl in flows}
+
+        opens, closes = [], []
+        for key, fl in all_flows.items():
+            fid, proto, src, sport = key
+            if key in self.closed_keys:
+                continue   # already logged as closed; just lingering in conntrack (e.g. TIME_WAIT)
+            existing = self.open_sessions.get(key)
+            if existing is None:
+                self.open_sessions[key] = {"started_at": now_iso, "bytes_in": fl.bytes_in,
+                                           "bytes_out": fl.bytes_out, "pkts_in": fl.pkts_in, "pkts_out": fl.pkts_out}
+                opens.append((fid, proto, src, sport, fl.reply_src, fl.reply_sport, now_iso))
+            else:
+                existing["bytes_in"], existing["bytes_out"] = fl.bytes_in, fl.bytes_out
+                existing["pkts_in"], existing["pkts_out"] = fl.pkts_in, fl.pkts_out
+        for key in list(self.open_sessions):
+            fl = all_flows.get(key)
+            if fl is not None and is_live(fl):
+                continue   # still genuinely open
+            s = self.open_sessions.pop(key)
+            fid, proto, src, sport = key
+            bi, bo, pi, po = (fl.bytes_in, fl.bytes_out, fl.pkts_in, fl.pkts_out) if fl else \
+                (s["bytes_in"], s["bytes_out"], s["pkts_in"], s["pkts_out"])
+            closes.append((bi, bo, pi, po, now_iso, fid, proto, src, sport, s["started_at"]))
+            self.closed_keys.add(key)
+        self.closed_keys &= all_flows.keys()   # drop keys that have fully vanished from conntrack
+        try:
+            self.store.record_connection_opens(opens)
+            self.store.record_connection_closes(closes)
+        except Exception:
+            log.exception("connection-log write failed")
 
     # ------------------------------------------------------------------
     def history(self, fid: int, rng: str) -> dict:

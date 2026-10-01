@@ -35,6 +35,34 @@ CREATE TABLE IF NOT EXISTS rollups (
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS rollups_fid_ts ON rollups (fid, ts);
 CREATE INDEX IF NOT EXISTS audit_ts ON audit (ts);
+
+-- One row per connection actually observed by the kernel (not an admin action - see `audit`
+-- above for that). Opened the moment a flow is first seen, closed when it disappears from
+-- conntrack. While open, bytes/pkts stay at 0 - they're only known for certain, from conntrack's
+-- own cumulative counters, at close time; a manager crash mid-connection means that connection's
+-- transfer is under-reported (closed with whatever was last recorded, which may be 0). This
+-- trade-off keeps the write volume low: two writes per connection's whole lifetime, batched
+-- per second, regardless of how long it lasts.
+CREATE TABLE IF NOT EXISTS connection_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fid INTEGER NOT NULL,
+    proto TEXT NOT NULL,
+    client_ip TEXT NOT NULL,
+    client_port INTEGER NOT NULL,
+    target_ip TEXT NOT NULL,
+    target_port INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    bytes_in INTEGER NOT NULL DEFAULT 0,
+    bytes_out INTEGER NOT NULL DEFAULT 0,
+    pkts_in INTEGER NOT NULL DEFAULT 0,
+    pkts_out INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS connlog_fid ON connection_log (fid, started_at);
+CREATE INDEX IF NOT EXISTS connlog_client ON connection_log (client_ip, started_at);
+CREATE INDEX IF NOT EXISTS connlog_started ON connection_log (started_at);
+CREATE INDEX IF NOT EXISTS connlog_open ON connection_log (fid, proto, client_ip, client_port, started_at)
+    WHERE ended_at IS NULL;
 """
 
 
@@ -213,8 +241,81 @@ class Store:
 
     def storage_stats(self) -> dict:
         r = self._q("SELECT (SELECT COUNT(*) FROM rollups) rollups, (SELECT MIN(ts) FROM rollups) oldest_rollup, "
-                    "(SELECT COUNT(*) FROM audit) audit, (SELECT MIN(ts) FROM audit) oldest_audit")[0]
+                    "(SELECT COUNT(*) FROM audit) audit, (SELECT MIN(ts) FROM audit) oldest_audit, "
+                    "(SELECT COUNT(*) FROM connection_log) connections, "
+                    "(SELECT MIN(started_at) FROM connection_log) oldest_connection")[0]
         return dict(r)
+
+    # ---- connection log (real traffic, not admin actions - see `audit` above) -----------
+    def record_connection_opens(self, rows: list[tuple]):
+        """rows: (fid, proto, client_ip, client_port, target_ip, target_port, started_at)"""
+        if not rows:
+            return
+        with self._lock:
+            self._db.executemany(
+                "INSERT INTO connection_log (fid, proto, client_ip, client_port, target_ip, target_port, started_at) "
+                "VALUES (?,?,?,?,?,?,?)", rows)
+
+    def record_connection_closes(self, rows: list[tuple]):
+        """rows: (bytes_in, bytes_out, pkts_in, pkts_out, ended_at, fid, proto, client_ip, client_port, started_at)
+        Matches the still-open row with the same identity + start time - there can be at most one,
+        since a new flow with the exact same (forward, protocol, client ip, client port) can only
+        become "new" again after the previous one has already closed."""
+        if not rows:
+            return
+        with self._lock:
+            self._db.executemany(
+                "UPDATE connection_log SET bytes_in=?, bytes_out=?, pkts_in=?, pkts_out=?, ended_at=? "
+                "WHERE fid=? AND proto=? AND client_ip=? AND client_port=? AND started_at=? AND ended_at IS NULL",
+                rows)
+
+    def close_orphaned_connections(self, ended_at_iso: str) -> int:
+        """On startup: any row still open belongs to a process life that ended without closing it
+        (a crash or an unclean stop) - close it now so it doesn't stay "open" forever. Its byte
+        counts stay whatever they were last recorded as (see the schema comment)."""
+        n = self._q("SELECT COUNT(*) n FROM connection_log WHERE ended_at IS NULL")[0]["n"]
+        if n:
+            self._x("UPDATE connection_log SET ended_at=? WHERE ended_at IS NULL", (ended_at_iso,))
+        return n
+
+    def connection_log(self, forward_id: Optional[int] = None, client_ip: Optional[str] = None,
+                       since: Optional[str] = None, limit: int = 200, before_id: Optional[int] = None) -> list[dict]:
+        where, args = [], []
+        if forward_id is not None:
+            where.append("fid=?"); args.append(forward_id)
+        if client_ip:
+            where.append("client_ip=?"); args.append(client_ip)
+        if since:
+            where.append("started_at>=?"); args.append(since)
+        if before_id:
+            where.append("id<?"); args.append(before_id)
+        sql = "SELECT * FROM connection_log"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(limit)
+        return [dict(r) for r in self._q(sql, args)]
+
+    def connection_log_summary(self, group_by: str = "client", since: Optional[str] = None,
+                               limit: int = 50) -> list[dict]:
+        col = "client_ip" if group_by == "client" else "fid"
+        where, args = "", []
+        if since:
+            where = "WHERE started_at>=?"
+            args.append(since)
+        args.append(limit)
+        rows = self._q(
+            f"SELECT {col} AS key, COUNT(*) sessions, SUM(bytes_in) bytes_in, SUM(bytes_out) bytes_out, "
+            f"SUM(pkts_in) pkts_in, SUM(pkts_out) pkts_out, MAX(started_at) last_seen, "
+            f"SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) live "
+            f"FROM connection_log {where} GROUP BY {col} ORDER BY (bytes_in + bytes_out) DESC LIMIT ?", args)
+        return [dict(r) for r in rows]
+
+    def purge_connection_log(self, older_than_iso: str) -> int:
+        before = self._q("SELECT COUNT(*) n FROM connection_log WHERE started_at < ? AND ended_at IS NOT NULL",
+                         (older_than_iso,))[0]["n"]
+        self._x("DELETE FROM connection_log WHERE started_at < ? AND ended_at IS NOT NULL", (older_than_iso,))
+        return before
 
     # ---- meta ---------------------------------------------------------------
     def meta(self, key: str) -> Optional[str]:

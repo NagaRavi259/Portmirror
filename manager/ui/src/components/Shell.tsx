@@ -1,4 +1,4 @@
-import { Activity, LayoutDashboard, LogOut, ScrollText, Settings2 } from "lucide-react";
+import { Activity, LayoutDashboard, LogOut, Radio, ScrollText, Settings2 } from "lucide-react";
 import { ReactNode } from "react";
 import { GlobalStats, SystemInfo } from "../lib/api";
 import { LinkState } from "../lib/live";
@@ -21,6 +21,7 @@ function Logo() {
 
 const NAV = [
   { href: "#/", page: "dashboard", label: "Forwards", icon: LayoutDashboard },
+  { href: "#/connections", page: "connections", label: "Connections", icon: Radio },
   { href: "#/audit", page: "audit", label: "Audit log", icon: ScrollText },
   { href: "#/settings", page: "settings", label: "Settings", icon: Settings2 },
 ];

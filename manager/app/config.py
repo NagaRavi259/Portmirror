@@ -32,16 +32,20 @@ MAX_RANGE = 1024
 SESSION_TTL_S = 12 * 3600
 
 
-def _retention_s(name: str):
-    """Days from env -> seconds; unset, empty or 0 means keep forever (None)."""
+def _retention_s(name: str, default_days: float = 0):
+    """Days from env -> seconds; 0 means keep forever (None). Unset falls back to default_days."""
     raw = os.environ.get(name, "").strip()
-    days = float(raw) if raw else 0
+    days = float(raw) if raw else default_days
     if days < 0:
         raise ValueError(f"{name} must be >= 0 (0 = keep forever)")
     return int(days * 86400) or None
 
 
-HISTORY_RETENTION_S = _retention_s("PM_HISTORY_RETENTION_DAYS")   # traffic history rollups
-AUDIT_RETENTION_S = _retention_s("PM_AUDIT_RETENTION_DAYS")       # audit log entries
+HISTORY_RETENTION_S = _retention_s("PM_HISTORY_RETENTION_DAYS")   # traffic history rollups - forever by default
+AUDIT_RETENTION_S = _retention_s("PM_AUDIT_RETENTION_DAYS")       # audit log entries - forever by default
+# Connection log is much higher volume than audit (one row pair per connection, not per admin
+# action), so unlike the two above it does NOT default to forever - set to 0 explicitly if you
+# really want that, and watch the database size (Settings -> Gateway shows it).
+CONNECTION_LOG_RETENTION_S = _retention_s("PM_CONNECTION_LOG_RETENTION_DAYS", default_days=30)
 RING_SECONDS = 3600
 PROBE_INTERVAL_S = 10

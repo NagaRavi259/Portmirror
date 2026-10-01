@@ -65,6 +65,15 @@ export function protoLabel(p: string): string {
   return p === "both" ? "TCP+UDP" : p.toUpperCase();
 }
 
+/** A forward is only worth opening as a link if it's enabled, not expired, speaks TCP, and
+ * there's somewhere to send the browser - a UDP-only forward or an unknown gateway address
+ * can't offer a meaningful one. */
+export function forwardUrl(f: { protocol: string; enabled: boolean; expired: boolean; listen_port: number },
+                           gwLanIp: string | undefined | null): string | null {
+  if (!gwLanIp || f.protocol === "udp" || !f.enabled || f.expired) return null;
+  return `http://${gwLanIp}:${f.listen_port}/`;
+}
+
 export function datetime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });

@@ -8,6 +8,7 @@ import { Api, Forward, SystemInfo, setUnauthorizedHandler } from "./lib/api";
 import { useLive } from "./lib/live";
 import { go, useRoute } from "./lib/router";
 import { Audit } from "./pages/Audit";
+import { Connections } from "./pages/Connections";
 import { Dashboard } from "./pages/Dashboard";
 import { ForwardDetail } from "./pages/ForwardDetail";
 import { Login } from "./pages/Login";
@@ -109,13 +110,14 @@ export default function App() {
         </a>
       )}
       {route.page === "dashboard" && (
-        <Dashboard forwards={live} snap={snap} loading={loading} onNew={() => setEditing({})}
+        <Dashboard forwards={live} snap={snap} loading={loading} system={system} onNew={() => setEditing({})}
           onEdit={(f) => setEditing({ forward: f })} onRemove={(f) => setRemoving({ forward: f, mode: "delete" })} onToggle={onToggle} />
       )}
       {route.page === "forward" && (
         <ForwardDetail forward={current} snap={snap} system={system} onEdit={(f) => setEditing({ forward: f })}
           onRemove={(f) => setRemoving({ forward: f, mode: "delete" })} onToggle={onToggle} />
       )}
+      {route.page === "connections" && <Connections forwards={live} />}
       {route.page === "audit" && <Audit />}
       {route.page === "settings" && (
         <Settings system={system} mustChange={auth.mustChange} onImported={load}

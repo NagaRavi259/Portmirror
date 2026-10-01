@@ -24,6 +24,13 @@
   Tailscale-based VPN link to a second physical device, managing real services (not a test topology). A
   spontaneous reboot during that real use recovered automatically with the full set of configured forwards
   restored — the first real-hardware confirmation that a full reboot is survived cleanly.
+- **Per-connection session log**: every real connection through a forward — who, which forward, when it
+  started and ended, and how much data moved — is recorded and queryable per client and per forward, distinct
+  from the administrative audit log. Verified against real traffic, including connections that complete faster
+  than one polling interval and connections that linger in the kernel's tracking table after finishing; see
+  [`fixed-issues.md`](fixed-issues.md) for the bugs that surfaced along the way.
+- **Clickable forward links**: an enabled TCP forward's port on the dashboard opens that service directly in a
+  new browser tab.
 
 ## Outstanding
 

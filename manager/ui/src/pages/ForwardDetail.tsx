@@ -2,7 +2,7 @@ import { ArrowLeft, ArrowRight, Ban, Clock, Pencil, ShieldCheck, Timer, Trash2, 
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { TimeChart } from "../components/Charts";
 import { useToast } from "../components/Toasts";
-import { Card, Empty, Modal, ProtoBadge, Segmented, Spinner, StatusDot, Switch, cx } from "../components/ui";
+import { Card, Empty, Modal, PortLink, ProtoBadge, Segmented, Spinner, StatusDot, Switch, cx } from "../components/ui";
 import { Api, AuditEntry, Conn, Forward, History, Snapshot, SystemInfo } from "../lib/api";
 import { ago, bps, bytes, count, datetime, duration, ports, rate, until } from "../lib/format";
 import { forwardState } from "./Dashboard";
@@ -146,7 +146,7 @@ export function ForwardDetail({ forward, snap, system, onEdit, onRemove, onToggl
         <div className="relative grid gap-6 p-5 md:grid-cols-[1fr_auto_1fr] md:items-center">
           <div>
             <div className="label">Local (LAN)</div>
-            <div className="num mt-1 text-lg text-ink-950">{system?.gw_lan_ip ?? "gateway"}<span className="text-accent-500">:{ports(forward.listen_port, forward.listen_port_end)}</span></div>
+            <div className="num mt-1 text-lg text-ink-950">{system?.gw_lan_ip ?? "gateway"}<PortLink forward={forward} gwLanIp={system?.gw_lan_ip} className="text-accent-500 hover:underline" /></div>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-500">
               <ShieldCheck size={13} className="text-emerald-500" /> from
               {forward.allowed_sources.map((s) => <span key={s} className="chip bg-white font-mono text-ink-700 ring-1 ring-line">{s}</span>)}

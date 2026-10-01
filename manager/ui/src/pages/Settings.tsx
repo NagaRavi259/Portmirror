@@ -161,8 +161,9 @@ export function Settings({ system, mustChange, onPasswordChanged, onImported }: 
               ["Last kernel apply", system.last_apply ? datetime(system.last_apply) : "—"], ["Self-heal", system.hold ? "paused (hold file)" : "active"],
               ["History retention", system.history_retention_days ? `${system.history_retention_days} days` : "forever"],
               ["Audit retention", system.audit_retention_days ? `${system.audit_retention_days} days` : "forever"],
+              ["Connection log retention", system.connection_log_retention_days ? `${system.connection_log_retention_days} days` : "forever"],
               ["History kept since", system.storage.oldest_rollup ? datetime(new Date(system.storage.oldest_rollup * 1000).toISOString()) : "—"],
-              ["Database size", `${bytes(system.db_bytes)} · ${system.storage.rollups.toLocaleString()} history rows · ${system.storage.audit.toLocaleString()} audit entries`],
+              ["Database size", `${bytes(system.db_bytes)} · ${system.storage.rollups.toLocaleString()} history rows · ${system.storage.audit.toLocaleString()} audit entries · ${system.storage.connections.toLocaleString()} connections logged`],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between gap-4 border-b border-line/70 pb-2">
                 <dt className="font-sans text-ink-400">{k}</dt><dd className="text-right text-ink-900">{v}</dd>

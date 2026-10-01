@@ -102,8 +102,23 @@ export interface TokenRow { id: number; name: string; created_at: string; last_u
 export interface SystemInfo {
   lan_if: string; vpn_if: string; lan_net: string; vpn_net: string; gw_lan_ip: string; gw_vpn_ip: string;
   ui_port: number; reserved_tcp_ports: number[]; max_range: number; last_apply: string | null; hold: boolean;
-  history_retention_days: number | null; audit_retention_days: number | null; db_bytes: number;
-  storage: { rollups: number; oldest_rollup: number | null; audit: number; oldest_audit: string | null };
+  history_retention_days: number | null; audit_retention_days: number | null; connection_log_retention_days: number | null;
+  db_bytes: number;
+  storage: { rollups: number; oldest_rollup: number | null; audit: number; oldest_audit: string | null;
+            connections: number; oldest_connection: string | null };
+}
+
+/** A real connection the kernel observed, start to finish - who, which forward, when, how much
+ * data. Distinct from the audit log, which only records administrative actions. */
+export interface ConnectionLogEntry {
+  id: number; fid: number; proto: "tcp" | "udp"; client_ip: string; client_port: number;
+  target_ip: string; target_port: number; started_at: string; ended_at: string | null;
+  bytes_in: number; bytes_out: number; pkts_in: number; pkts_out: number;
+}
+
+export interface ConnectionLogSummaryRow {
+  key: string; sessions: number; bytes_in: number; bytes_out: number;
+  pkts_in: number; pkts_out: number; last_seen: string; live: number;
 }
 
 export class ApiError extends Error {
@@ -169,6 +184,20 @@ export const Api = {
   exportAll: () => api<{ forwards: ForwardBody[] }>("GET", "/api/export"),
   importAll: (forwards: ForwardBody[], mode: "merge" | "replace") =>
     api<{ imported: number }>("POST", "/api/import", { forwards, mode }),
+  connectionLog: (params: { forwardId?: number; clientIp?: string; since?: string; limit?: number; before?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.forwardId != null) q.set("forward_id", String(params.forwardId));
+    if (params.clientIp) q.set("client_ip", params.clientIp);
+    if (params.since) q.set("since", params.since);
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.before) q.set("before", String(params.before));
+    return api<ConnectionLogEntry[]>("GET", `/api/connection-log?${q}`);
+  },
+  connectionLogSummary: (groupBy: "client" | "forward", since?: string) => {
+    const q = new URLSearchParams({ group_by: groupBy });
+    if (since) q.set("since", since);
+    return api<ConnectionLogSummaryRow[]>("GET", `/api/connection-log/summary?${q}`);
+  },
   tokens: () => api<TokenRow[]>("GET", "/api/tokens"),
   createToken: (name: string) => api<{ id: number; name: string; token: string }>("POST", "/api/tokens", { name }),
   deleteToken: (id: number) => api("DELETE", `/api/tokens/${id}`),
