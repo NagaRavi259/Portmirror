@@ -1,0 +1,4 @@
+manager/ui/node_modules
+manager/ui/dist
+results
+**/__pycache__

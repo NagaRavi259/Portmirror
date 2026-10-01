@@ -1,0 +1,28 @@
+# /etc/systemd/system/portmirror-manager.service
+#
+# The forward manager (API + web UI on :8088). Runs as a plain Python process
+# in a venv - no Docker on the Pi. If it crashes, systemd restarts it in 2s;
+# the kernel keeps forwarding traffic in the meantime (portmirror-base.service
+# already loaded the rules and doesn't depend on this unit staying up).
+
+[Unit]
+Description=Port-mirroring forward manager (API + web UI)
+After=portmirror-base.service
+Requires=portmirror-base.service
+PartOf=portmirror-base.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/portmirror/portmirror.env
+WorkingDirectory=/opt/portmirror
+ExecStart=/bin/sh -c 'exec /opt/portmirror/venv/bin/python3 -m uvicorn app.main:app --host 0.0.0.0 --port "$PM_UI_PORT" --no-access-log --log-level warning'
+Restart=always
+RestartSec=2
+# Root is required to run nft/conntrack and read/probe VPN-side hosts.
+# To reduce privilege instead, replace with a dedicated user plus
+# `AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW` and grant that user
+# passwordless sudo to /usr/sbin/nft and /usr/sbin/conntrack.
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,237 @@
+# Port-mirroring test topology - runnable build of docs_v2 with fixes.
+#
+#   vpn_net   10.0.0.0/24      A .12  B .13  C .14  D .15  log_generator .16  ws_log_stream .17  E .88
+#   local_net 192.168.88.0/24  E .8   F .67  G .23
+#
+# E is the only node on both networks. Docker's inter-network isolation
+# means F/G can't reach 10.0.0.0/24 directly, and backends have no route
+# back to 192.168.88.0/24 - the same constraint as the real remote network.
+#
+# Up:    docker compose up -d --build
+# Tests: ./run_all.sh
+
+name: portmirror
+
+networks:
+  vpn_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24
+  local_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.88.0/24
+
+x-pg-env: &pg-env
+  PGHOST: "10.0.0.15"
+  PGPORT: "5432"
+  PGUSER: "postgres"
+  PGPASSWORD: "testpass123"
+  PGDATABASE: "world"
+
+volumes:
+  pm_state:
+
+services:
+
+  # ---- A: HTTP ----
+  container_a:
+    image: python:3.12-slim
+    container_name: pm-A
+    # serves /srv: a small index (GET / -> 200) plus a 32 MB blob for bulk-download traffic
+    command: ["sh", "-c", "mkdir -p /srv && head -c 33554432 /dev/urandom > /srv/blob.bin && echo ok > /srv/index.html && cd /srv && exec python3 -u -m http.server 80"]
+    restart: unless-stopped
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.12
+
+  # ---- B: HTTPS ----
+  container_b:
+    build: images/https
+    image: portmirror/https:local
+    container_name: pm-B
+    restart: unless-stopped
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.13
+
+  # ---- C: RDP (xrdp + Xfce). Args are user / password / sudo. ----
+  container_c:
+    image: danchitnis/xrdp:ubuntu-xfce
+    container_name: pm-C
+    command: ["tester", "testpass123", "no"]
+    restart: unless-stopped
+    mem_limit: 1g
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.14
+
+  # ---- C sidecar: VNC on 10.0.0.14:5900 (shares C's network namespace) ----
+  container_c_vnc:
+    build: images/vnc
+    image: portmirror/vnc:local
+    container_name: pm-C_vnc
+    network_mode: "service:container_c"
+    restart: unless-stopped
+    mem_limit: 256m
+    depends_on: [container_c]
+
+  # ---- D: Postgres with the real "world" sample dataset ----
+  container_d:
+    image: aa8y/postgres-dataset:world
+    container_name: pm-D
+    environment:
+      POSTGRES_PASSWORD: testpass123
+    restart: unless-stopped
+    mem_limit: 512m
+    healthcheck:
+      # 127.0.0.1 only answers once init has finished (the init server is socket-only)
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d world && psql -h 127.0.0.1 -U postgres -d world -tAc 'SELECT 1 FROM city LIMIT 1' | grep -q 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.15
+
+  # ---- D sidecar: UDP echo on 10.0.0.15:9000 (shares D's network namespace) ----
+  container_d_udp:
+    build: images/udp-echo
+    image: portmirror/udp-echo:local
+    container_name: pm-D_udp
+    network_mode: "service:container_d"
+    restart: unless-stopped
+    depends_on: [container_d]
+
+  # ---- test target: tcp+udp echo on 7000-7010, replies name the port (manager tests) ----
+  test_target:
+    image: portmirror/udp-echo:local
+    container_name: pm-T
+    command: ["python3", "-u", "/multi_echo.py"]
+    restart: unless-stopped
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.20
+
+  # ---- log generator -> Postgres INSERT + NOTIFY ----
+  log_generator:
+    build: images/logpipeline
+    image: portmirror/logpipeline:local
+    container_name: pm-log_generator
+    command: ["python3", "log_generator.py"]
+    environment:
+      <<: *pg-env
+      SUBJECT_TABLE: "city"
+      SUBJECT_ID_COL: "id"
+      SUBJECT_LABEL_COL: "name"
+    restart: unless-stopped
+    depends_on:
+      container_d: { condition: service_healthy }
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.16
+
+  # ---- WebSocket streamer (LISTEN new_log) on :8765 ----
+  ws_log_stream:
+    image: portmirror/logpipeline:local
+    container_name: pm-ws_log_stream
+    command: ["python3", "ws_db_log_stream.py"]
+    environment:
+      <<: *pg-env
+      WS_PORT: "8765"
+    restart: unless-stopped
+    depends_on:
+      log_generator: { condition: service_started }
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.17
+
+  # ---- E: the gateway ("Local Pi") + portmirror manager (API/UI :8088) ----
+  gateway_e:
+    build:
+      context: .
+      dockerfile: images/gateway/Dockerfile
+      target: ${PM_GATEWAY_TARGET:-full}
+    image: portmirror/gateway:local
+    container_name: pm-E
+    cap_add: [NET_ADMIN, NET_RAW]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+      net.ipv6.conf.all.forwarding: "0"
+      net.netfilter.nf_conntrack_acct: "1"     # per-connection bytes for the live view
+    environment:
+      NFT_RULESET: /etc/nftables/nftables.conf
+      PM_ADMIN_PASSWORD: ${PM_ADMIN_PASSWORD:-}
+      # Retention in days for traffic history and the audit log. 0 / unset = keep forever.
+      PM_HISTORY_RETENTION_DAYS: ${PM_HISTORY_RETENTION_DAYS:-0}
+      PM_AUDIT_RETENTION_DAYS: ${PM_AUDIT_RETENTION_DAYS:-0}
+    volumes:
+      - ./nftables:/etc/nftables:ro
+      - pm_state:/state
+    ports:
+      # UI/API. Loopback by default; set PM_UI_BIND (e.g. the Tailscale IP) in .env.
+      # Never bind this to the public interface.
+      - "${PM_UI_BIND:-127.0.0.1}:8088:8088"
+    restart: unless-stopped
+    networks:
+      vpn_net:
+        ipv4_address: 10.0.0.88
+        interface_name: vpn0
+      local_net:
+        ipv4_address: 192.168.88.8
+        interface_name: lan0
+
+  # ---- demo traffic generator (opt-in): docker compose --profile traffic up -d traffic_gen ----
+  traffic_gen:
+    build: images/traffic
+    image: portmirror/traffic:local
+    container_name: pm-traffic
+    profiles: ["traffic"]
+    cap_add: [NET_ADMIN]          # adds simulated client IPs 192.168.88.101.. to its own interface
+    environment:
+      TRAFFIC_LEVEL: ${TRAFFIC_LEVEL:-1.0}
+      BULK_MBPS: ${BULK_MBPS:-20}
+      HTTP_RPS: ${HTTP_RPS:-25}
+      HTTPS_RPS: ${HTTPS_RPS:-6}
+      UDP_STREAM_MBPS: ${UDP_STREAM_MBPS:-4}
+      UDP_STREAMS: ${UDP_STREAMS:-4}
+      UDP_PPS: ${UDP_PPS:-10}
+      PG_QPS: ${PG_QPS:-3}
+      WS_HOLD: ${WS_HOLD:-12}
+      VNC_HOLD: ${VNC_HOLD:-3}
+      RDP_HOLD: ${RDP_HOLD:-2}
+      CLIENTS: ${CLIENTS:-8}
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      local_net:
+        ipv4_address: 192.168.88.100
+
+  # ---- F, G: clients ----
+  client_f:
+    build: images/client
+    image: portmirror/client:local
+    container_name: pm-F
+    hostname: F
+    cap_add: [NET_ADMIN, NET_RAW]   # INTER-FLAP flaps its own link
+    volumes:
+      - ./tests:/opt/tests:ro
+    networks:
+      local_net:
+        ipv4_address: 192.168.88.67
+
+  client_g:
+    image: portmirror/client:local
+    container_name: pm-G
+    hostname: G
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./tests:/opt/tests:ro
+    depends_on: [client_f]
+    networks:
+      local_net:
+        ipv4_address: 192.168.88.23

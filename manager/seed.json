@@ -1,0 +1,86 @@
+[
+  {
+    "name": "A - HTTP",
+    "protocol": "tcp",
+    "listen_port": 80,
+    "target_ip": "10.0.0.12",
+    "target_port": 80,
+    "allowed_sources": [
+      "192.168.88.0/24"
+    ],
+    "enabled": true,
+    "description": "seeded from the original static ruleset"
+  },
+  {
+    "name": "B - HTTPS",
+    "protocol": "tcp",
+    "listen_port": 443,
+    "target_ip": "10.0.0.13",
+    "target_port": 443,
+    "allowed_sources": [
+      "192.168.88.0/24"
+    ],
+    "enabled": true,
+    "description": "seeded from the original static ruleset"
+  },
+  {
+    "name": "C - RDP",
+    "protocol": "tcp",
+    "listen_port": 3389,
+    "target_ip": "10.0.0.14",
+    "target_port": 3389,
+    "allowed_sources": [
+      "192.168.88.0/24"
+    ],
+    "enabled": true,
+    "description": "seeded from the original static ruleset"
+  },
+  {
+    "name": "C - VNC",
+    "protocol": "tcp",
+    "listen_port": 5900,
+    "target_ip": "10.0.0.14",
+    "target_port": 5900,
+    "allowed_sources": [
+      "192.168.88.0/24"
+    ],
+    "enabled": true,
+    "description": "seeded from the original static ruleset"
+  },
+  {
+    "name": "D - Postgres",
+    "protocol": "tcp",
+    "listen_port": 5432,
+    "target_ip": "10.0.0.15",
+    "target_port": 5432,
+    "allowed_sources": [
+      "192.168.88.0/24"
+    ],
+    "enabled": true,
+    "description": "seeded from the original static ruleset"
+  },
+  {
+    "name": "Log stream (WebSocket)",
+    "protocol": "tcp",
+    "listen_port": 8765,
+    "target_ip": "10.0.0.17",
+    "target_port": 8765,
+    "allowed_sources": [
+      "192.168.88.0/24"
+    ],
+    "enabled": true,
+    "description": "seeded from the original static ruleset"
+  },
+  {
+    "name": "D - UDP echo",
+    "protocol": "udp",
+    "listen_port": 9000,
+    "target_ip": "10.0.0.15",
+    "target_port": 9000,
+    "allowed_sources": [
+      "192.168.88.0/24"
+    ],
+    "enabled": true,
+    "description": "seeded from the original static ruleset"
+  }
+]
