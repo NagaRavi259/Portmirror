@@ -78,3 +78,14 @@ export function datetime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
+
+/** Annotates any IPv4 address found in free-form text with its nickname, if one's set - e.g. the
+ * audit log, which mentions client addresses inside arbitrary strings rather than a discrete field,
+ * so this is a text-level pass rather than a dedicated component like ClientLabel. */
+export function withDeviceNames(text: string | null | undefined, deviceNames: Record<string, string>): string {
+  if (!text || Object.keys(deviceNames).length === 0) return text ?? "";
+  return text.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, (ip) => {
+    const name = deviceNames[ip];
+    return name ? `${ip} (${name})` : ip;
+  });
+}

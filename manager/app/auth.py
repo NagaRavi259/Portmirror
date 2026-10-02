@@ -20,8 +20,9 @@ ADMIN = "admin"
 
 
 class Auth:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, notifier=None):
         self.store = store
+        self.notifier = notifier
         self.failures: dict[str, deque] = defaultdict(deque)
         self.internal_token = ""
 
@@ -56,6 +57,10 @@ class Auth:
         except (VerifyMismatchError, VerificationError, InvalidHashError):
             self.failures[ip].append(time.time())
             self.store.audit(username or "?", "auth.login_failed", ip)
+            # Fires once, exactly when the count crosses the threshold within the window - not on
+            # every failure past it, so one real burst is one notification, not a flood.
+            if self.notifier and len(self.failures[ip]) == 3:
+                self.notifier.notify("login_failures", "error", f"Repeated failed logins from {ip}", {"ip": ip})
             raise HTTPException(401, "invalid username or password")
         if ph.check_needs_rehash(h):
             self.store.set_user(username, ph.hash(password))

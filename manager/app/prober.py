@@ -7,10 +7,20 @@ from . import config, engine
 from .models import Forward
 
 
+def health_flip(prev: dict | None, cur: dict) -> tuple[str, str] | None:
+    """(type, severity) if this is a reportable state change, else None. Never fires on the first-ever
+    observation (prev is None) - otherwise every forward would notify once on every manager restart,
+    which is noise, not signal - and never fires when the state hasn't actually changed."""
+    if prev is None or prev["state"] == cur["state"]:
+        return None
+    return ("target_down", "warning") if cur["state"] == "down" else ("target_up", "info")
+
+
 class Prober:
-    def __init__(self, get_forwards: Callable[[], list[Forward]]):
+    def __init__(self, get_forwards: Callable[[], list[Forward]], notifier=None):
         self.get_forwards = get_forwards
         self.status: dict[int, dict] = {}
+        self.notifier = notifier
 
     async def run(self):
         while True:
@@ -47,5 +57,11 @@ class Prober:
                 ok, err = False, type(e).__name__
         st = {"state": "up" if ok else "down", "latency_ms": round((time.monotonic() - t0) * 1000, 1) if ok else None,
               "checked_at": time.time(), "method": method, "error": err}
+        prev = self.status.get(f.id)
         self.status[f.id] = st
+        flip = health_flip(prev, st)
+        if self.notifier and flip:
+            type_, severity = flip
+            verb = "unreachable" if type_ == "target_down" else "reachable again"
+            self.notifier.notify(type_, severity, f"“{f.name}”'s target is {verb}", {"forward_id": f.id})
         return st

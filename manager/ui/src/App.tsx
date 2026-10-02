@@ -9,6 +9,7 @@ import { useLive } from "./lib/live";
 import { go, useRoute } from "./lib/router";
 import { Audit } from "./pages/Audit";
 import { Connections } from "./pages/Connections";
+import { Diagnostics } from "./pages/Diagnostics";
 import { Dashboard } from "./pages/Dashboard";
 import { ForwardDetail } from "./pages/ForwardDetail";
 import { Login } from "./pages/Login";
@@ -23,6 +24,8 @@ export default function App() {
   const [forwards, setForwards] = useState<Forward[]>([]);
   const [loading, setLoading] = useState(true);
   const [system, setSystem] = useState<SystemInfo | null>(null);
+  const [deviceNames, setDeviceNames] = useState<Record<string, string>>({});
+  const loadDeviceNames = useCallback(() => { Api.deviceNames().then(setDeviceNames).catch(() => {}); }, []);
   const [editing, setEditing] = useState<{ forward?: Forward } | null>(null);
   const [removing, setRemoving] = useState<{ forward: Forward; mode: "delete" | "disable" } | null>(null);
   const { snap, link } = useLive(auth.state === "in");
@@ -46,7 +49,8 @@ export default function App() {
     if (auth.state !== "in") return;
     load();
     Api.system().then(setSystem).catch(() => {});
-  }, [auth.state, load]);
+    loadDeviceNames();
+  }, [auth.state, load, loadDeviceNames]);
 
   // refetch definitions whenever the server says forwards changed (any client, expiry, import...)
   useEffect(() => {
@@ -114,11 +118,12 @@ export default function App() {
           onEdit={(f) => setEditing({ forward: f })} onRemove={(f) => setRemoving({ forward: f, mode: "delete" })} onToggle={onToggle} />
       )}
       {route.page === "forward" && (
-        <ForwardDetail forward={current} snap={snap} system={system} onEdit={(f) => setEditing({ forward: f })}
-          onRemove={(f) => setRemoving({ forward: f, mode: "delete" })} onToggle={onToggle} />
+        <ForwardDetail forward={current} snap={snap} system={system} deviceNames={deviceNames} onDeviceNamesChanged={loadDeviceNames}
+          onEdit={(f) => setEditing({ forward: f })} onRemove={(f) => setRemoving({ forward: f, mode: "delete" })} onToggle={onToggle} />
       )}
-      {route.page === "connections" && <Connections forwards={live} />}
-      {route.page === "audit" && <Audit />}
+      {route.page === "connections" && <Connections forwards={live} deviceNames={deviceNames} onDeviceNamesChanged={loadDeviceNames} />}
+      {route.page === "audit" && <Audit deviceNames={deviceNames} />}
+      {route.page === "diagnostics" && <Diagnostics />}
       {route.page === "settings" && (
         <Settings system={system} mustChange={auth.mustChange} onImported={load}
           onPasswordChanged={() => setAuth({ state: "anon" })} />

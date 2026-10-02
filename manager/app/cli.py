@@ -1,6 +1,6 @@
 """pmctl - talk to the local manager with the internal token.
 
-  pmctl status | forwards | reapply | token <name> | password
+  pmctl status | forwards | reapply | token <name> | password | diag
   pmctl api <METHOD> <path> [json-body]
   pmctl update [check | --yes]   check GitHub for a newer release, or install one
 """
@@ -58,6 +58,11 @@ def _dispatch(argv: list[str]) -> int:
         print(config.ADMIN_PASSWORD_FILE.read_text().strip() if config.ADMIN_PASSWORD_FILE.exists()
               else "initial password already changed")
         return 0
+    elif cmd == "diag":
+        code, body = call("GET", "/api/diag")
+        for c in body.get("checks", []):
+            print(f"[{c['status'].upper():<4}] {c['label']:<32} {c['detail']}")
+        return 0 if body.get("ok") else 1
     elif cmd == "api" and len(argv) >= 3:
         code, body = call(argv[1].upper(), argv[2], json.loads(argv[3]) if len(argv) > 3 else None)
         print(json.dumps(body, indent=2))

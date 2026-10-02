@@ -207,6 +207,28 @@ def main():
             return f"live={live_val.inner_text()} rows={page.locator('tbody tr').count()} requests_sent={tr.ok}"
         check("UI-LIVE-METRICS", "Detail page shows live connections and moving traffic", live)
 
+        def device_name():
+            row = page.locator("tbody tr").first
+            btn = row.get_by_role("button").first   # the ClientLabel for this row's client IP
+            raw = btn.inner_text()
+            btn.click()
+            inp = row.locator("input")
+            inp.fill("e2e-test-device")
+            inp.press("Enter")
+            expect(row.get_by_role("button", name=re.compile("e2e-test-device"))).to_be_visible(timeout=5000)
+            page.goto(URL + "/#/connections")
+            expect(page.get_by_text("e2e-test-device").first).to_be_visible(timeout=10000)
+            page.screenshot(path=f"{SHOTS}/05b-device-name.png")
+            # clean up: clear the name back out so repeat runs start from a known state
+            page.goto(URL + "/#/")
+            page.locator("tbody tr", has_text="e2e-web").click()
+            row2 = page.locator("tbody tr").first
+            row2.get_by_role("button", name=re.compile("e2e-test-device")).click()
+            row2.locator("input").fill("")
+            row2.locator("input").press("Enter")
+            return f"was {raw!r}, renamed to 'e2e-test-device', seen on Connections page too, then cleared"
+        check("UI-DEVICE-NAME", "Naming a client device propagates to the Connections page", device_name)
+
         def kill_one():
             before = page.locator("tbody tr").count()
             page.get_by_role("button", name=re.compile("^Cut connection from")).first.click()
@@ -307,6 +329,37 @@ def main():
             page.screenshot(path=f"{SHOTS}/10-settings.png")
             return f"token created, works on the API ({n} forwards), revoked"
         check("UI-TOKENS", "Settings: create an API token, use it, revoke it", settings)
+
+        def diagnostics():
+            page.goto(URL + "/#/diagnostics")
+            expect(page.get_by_role("heading", name="Diagnostics")).to_be_visible()
+            expect(page.locator("li", has_text="Firewall ruleset syntax")).to_be_visible(timeout=10000)
+            rows = page.locator("ul > li")
+            expect(rows).to_have_count(10, timeout=10000)
+            expect(page.get_by_text("Everything checks out.")).to_be_visible()
+            page.get_by_role("button", name="Run again").click()
+            expect(page.get_by_text("Everything checks out.")).to_be_visible(timeout=10000)
+            page.screenshot(path=f"{SHOTS}/09c-diagnostics.png", full_page=True)
+            return f"{rows.count()} checks shown, all green on a healthy stack"
+        check("UI-DIAGNOSTICS", "Diagnostics page runs and shows every check", diagnostics)
+
+        def notifications():
+            bell = page.get_by_label("Notifications")
+            expect(bell).to_be_visible()
+            bell.click()
+            panel = page.get_by_text("Notifications", exact=True)
+            expect(panel).to_be_visible(timeout=5000)
+            empty = page.get_by_text("Nothing here")
+            rows = page.locator("ul li", has_text=re.compile(r"\bago\b"))
+            # whichever state it's in (clean stack vs. one carried over from earlier in this run),
+            # exactly one of these two must be true - never neither, never a broken half-state
+            expect(empty.or_(rows.first)).to_be_visible(timeout=5000)
+            detail = "empty state shown" if rows.count() == 0 else f"{rows.count()} notification(s) shown"
+            page.screenshot(path=f"{SHOTS}/09d-notifications.png")
+            page.keyboard.press("Escape")
+            expect(panel).to_be_hidden()
+            return detail
+        check("UI-NOTIFICATIONS", "Notification bell opens, shows a well-formed state either way", notifications)
 
         # ---- mobile ---------------------------------------------------------------------
         def mobile():

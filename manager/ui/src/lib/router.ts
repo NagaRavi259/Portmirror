@@ -5,6 +5,7 @@ export type Route =
   | { page: "forward"; id: number }
   | { page: "connections" }
   | { page: "audit" }
+  | { page: "diagnostics" }
   | { page: "settings" };
 
 function parse(hash: string): Route {
@@ -13,6 +14,7 @@ function parse(hash: string): Route {
   if (m) return { page: "forward", id: Number(m[1]) };
   if (h.startsWith("connections")) return { page: "connections" };
   if (h.startsWith("audit")) return { page: "audit" };
+  if (h.startsWith("diagnostics")) return { page: "diagnostics" };
   if (h.startsWith("settings")) return { page: "settings" };
   return { page: "dashboard" };
 }

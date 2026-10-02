@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, Ban, Clock, Gauge, Pencil, ShieldCheck, Timer, T
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { TimeChart } from "../components/Charts";
 import { useToast } from "../components/Toasts";
+import { ClientLabel } from "../components/ClientLabel";
 import { Card, Empty, Modal, PortLink, ProtoBadge, Segmented, Spinner, StatusDot, Switch, cx } from "../components/ui";
 import { Api, AuditEntry, Conn, Forward, History, Snapshot, SystemInfo } from "../lib/api";
 import { ago, bps, bytes, count, datetime, duration, ports, rate, until } from "../lib/format";
@@ -25,8 +26,9 @@ const STATE_TONE: Record<string, string> = {
   FIN_WAIT: "bg-ink-950/[.05] text-ink-500", LAST_ACK: "bg-ink-950/[.05] text-ink-500",
 };
 
-export function ForwardDetail({ forward, snap, system, onEdit, onRemove, onToggle }: {
+export function ForwardDetail({ forward, snap, system, deviceNames, onDeviceNamesChanged, onEdit, onRemove, onToggle }: {
   forward: Forward | undefined; snap: Snapshot | null; system: SystemInfo | null;
+  deviceNames: Record<string, string>; onDeviceNamesChanged: () => void;
   onEdit: (f: Forward) => void; onRemove: (f: Forward) => void; onToggle: (f: Forward, on: boolean) => void;
 }) {
   const toast = useToast();
@@ -243,7 +245,10 @@ export function ForwardDetail({ forward, snap, system, onEdit, onRemove, onToggl
                     const key = `${c.proto}-${c.src}-${c.sport}`;
                     return (
                       <tr key={key} className="border-b border-line/70 last:border-0 hover:bg-canvas/60">
-                        <td className="px-5 py-2.5 text-ink-900">{c.src}<span className="text-ink-400">:{c.sport}</span></td>
+                        <td className="px-5 py-2.5 text-ink-900">
+                          <ClientLabel ip={c.src} deviceNames={deviceNames} onChanged={onDeviceNamesChanged} />
+                          <span className="text-ink-400">:{c.sport}</span>
+                        </td>
                         <td className="px-5 py-2.5"><span className={cx("chip font-sans", STATE_TONE[c.state] ?? "bg-canvas text-ink-500")}>{c.proto.toUpperCase()} · {c.state}</span></td>
                         <td className="px-5 py-2.5 text-ink-500">{c.reply_src}:{c.reply_sport}</td>
                         <td className="px-5 py-2.5 text-right text-accent-600">{bytes(c.bytes_in)}</td>
@@ -274,8 +279,8 @@ export function ForwardDetail({ forward, snap, system, onEdit, onRemove, onToggl
                   return (
                     <li key={c.ip}>
                       <div className="flex items-center justify-between font-mono text-[12.5px]">
-                        <span className="text-ink-900">{c.ip}</span>
-                        <span className="text-ink-500">{c.conns} · {bytes(c.bytes)}</span>
+                        <ClientLabel ip={c.ip} deviceNames={deviceNames} onChanged={onDeviceNamesChanged} className="text-ink-900" />
+                        <span className="shrink-0 text-ink-500">{c.conns} · {bytes(c.bytes)}</span>
                       </div>
                       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-ink-950/[.05]">
                         <div className="h-full rounded-full bg-gradient-to-r from-accent-500 to-signal-500" style={{ width: `${(c.conns / max) * 100}%` }} />

@@ -77,3 +77,4 @@ first forward.
 - [`docs/progress.md`](docs/progress.md) — what's validated, what isn't yet
 - [`docs/fixed-issues.md`](docs/fixed-issues.md) — real bugs found during development and deployment, and how they were fixed
 - [`docs/roadmap.md`](docs/roadmap.md) — planned features and ideas under consideration
+- [`docs/feature-checklist.md`](docs/feature-checklist.md) — the checkbox-tracked build list for the current batch of selected features, with test cases

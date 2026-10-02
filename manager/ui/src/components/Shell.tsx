@@ -1,8 +1,9 @@
-import { Activity, LayoutDashboard, LogOut, Radio, ScrollText, Settings2 } from "lucide-react";
+import { Activity, LayoutDashboard, LogOut, Radio, ScrollText, Settings2, Stethoscope } from "lucide-react";
 import { ReactNode } from "react";
 import { GlobalStats, SystemInfo } from "../lib/api";
 import { LinkState } from "../lib/live";
 import { Route } from "../lib/router";
+import { NotificationBell } from "./NotificationBell";
 import { StatusDot, cx } from "./ui";
 
 function Logo() {
@@ -23,6 +24,7 @@ const NAV = [
   { href: "#/", page: "dashboard", label: "Forwards", icon: LayoutDashboard },
   { href: "#/connections", page: "connections", label: "Connections", icon: Radio },
   { href: "#/audit", page: "audit", label: "Audit log", icon: ScrollText },
+  { href: "#/diagnostics", page: "diagnostics", label: "Diagnostics", icon: Stethoscope },
   { href: "#/settings", page: "settings", label: "Settings", icon: Settings2 },
 ];
 
@@ -73,7 +75,7 @@ export function Shell({ route, link, global, system, user, onLogout, children }:
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-white/70 px-5 backdrop-blur-md lg:px-8">
           <div className="lg:hidden"><Logo /></div>
-          <nav className="flex gap-1 lg:hidden">
+          <nav className="flex min-w-0 gap-1 overflow-x-auto scroll-thin lg:hidden">
             {NAV.map(({ href, page, icon: Icon, label }) => (
               <a key={page} href={href} aria-label={label} className={cx("btn-ghost h-8 w-8 px-0", active === page && "text-accent-600")}><Icon size={16} /></a>
             ))}
@@ -91,6 +93,7 @@ export function Shell({ route, link, global, system, user, onLogout, children }:
               <StatusDot state={link === "live" ? "up" : link === "connecting" ? "warn" : "down"} pulse={link === "live"} />
               {link === "live" ? "Live" : link === "connecting" ? "Connecting" : "Reconnecting"}
             </span>
+            <NotificationBell />
           </div>
         </header>
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-5 py-6 lg:px-8 lg:py-8">{children}</main>

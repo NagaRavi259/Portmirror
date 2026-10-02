@@ -1,5 +1,6 @@
 """portmirror manager - REST + WebSocket API and the static UI."""
 import asyncio
+import ipaddress
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -9,10 +10,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 
-from . import config, engine
+from . import config, diag, engine
 from .auth import COOKIE, Auth
 from .collector import Collector
-from .models import ForwardIn, ImportIn, KillConnIn, LoginIn, PasswordIn, ToggleIn, TokenIn
+from .models import DeviceNameIn, ForwardIn, ImportIn, KillConnIn, LoginIn, NotificationStateIn, PasswordIn, ToggleIn, TokenIn
+from .notify import Notifier
 from .prober import Prober
 from .service import Manager
 from .store import ConflictError, Store
@@ -22,9 +24,10 @@ log = logging.getLogger("pm")
 
 config.STATE_DIR.mkdir(parents=True, exist_ok=True)
 store = Store(config.DB_PATH)
-auth = Auth(store)
-manager = Manager(store)
-prober = Prober(manager.forwards)
+notifier = Notifier(store)
+auth = Auth(store, notifier)
+manager = Manager(store, notifier)
+prober = Prober(manager.forwards, notifier)
 collector = Collector(store, manager.forwards, prober)
 
 
@@ -232,6 +235,12 @@ async def reapply(actor: str = Depends(who)):
     return {"ok": True}
 
 
+@app.get("/api/diag")
+async def diagnostics(_: str = Depends(who)):
+    checks = await diag.run(manager, collector, prober)
+    return {"ok": all(c["status"] in ("ok", "skip") for c in checks), "checks": checks}
+
+
 @app.get("/api/audit")
 async def audit(limit: int = Query(200, le=1000), before: int | None = None, _: str = Depends(who)):
     return store.audit_log(limit, before)
@@ -278,6 +287,66 @@ async def delete_token(tid: int, actor: str = Depends(who)):
         raise HTTPException(404, "token not found")
     store.audit(actor, "token.delete", str(tid))
     return {"deleted": tid}
+
+
+# ---- device names ---------------------------------------------------------------
+@app.get("/api/device-names")
+async def device_names(_: str = Depends(who)):
+    return store.device_names()
+
+
+@app.put("/api/device-names/{ip}")
+async def set_device_name(ip: str, body: DeviceNameIn, actor: str = Depends(who)):
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(422, "not a valid IP address")
+    store.set_device_name(ip, body.name)
+    store.audit(actor, "device.name", f"{ip} -> {body.name}")
+    return {"ip": ip, "name": body.name}
+
+
+@app.delete("/api/device-names/{ip}")
+async def delete_device_name(ip: str, actor: str = Depends(who)):
+    if not store.delete_device_name(ip):
+        raise HTTPException(404, "no name set for this address")
+    store.audit(actor, "device.unname", ip)
+    return {"ok": True}
+
+
+# ---- notifications ----------------------------------------------------------------
+@app.get("/api/notifications")
+async def notifications(limit: int = Query(100, le=500), state: str | None = None, _: str = Depends(who)):
+    return {"unread": store.unread_notification_count(), "items": store.notifications(limit, state),
+            "muted": store.muted_types()}
+
+
+@app.post("/api/notifications/read-all")
+async def mark_all_notifications_read(actor: str = Depends(who)):
+    store.mark_all_notifications_read()
+    return {"ok": True}
+
+
+@app.post("/api/notifications/{nid}/state")
+async def set_notification_state(nid: int, body: NotificationStateIn, actor: str = Depends(who)):
+    if not store.set_notification_state(nid, body.state):
+        raise HTTPException(404, "notification not found")
+    store.audit(actor, f"notification.{body.state}", str(nid))
+    return {"ok": True}
+
+
+@app.post("/api/notifications/mute/{type_}")
+async def mute_notification_type(type_: str, actor: str = Depends(who)):
+    store.mute_type(type_)
+    store.audit(actor, "notification.mute", type_)
+    return {"ok": True}
+
+
+@app.delete("/api/notifications/mute/{type_}")
+async def unmute_notification_type(type_: str, actor: str = Depends(who)):
+    store.unmute_type(type_)
+    store.audit(actor, "notification.unmute", type_)
+    return {"ok": True}
 
 
 # ---- live stream --------------------------------------------------------------

@@ -122,6 +122,16 @@ export interface ConnectionLogSummaryRow {
   pkts_in: number; pkts_out: number; last_seen: string; live: number;
 }
 
+export interface DiagCheck {
+  id: string; label: string; status: "ok" | "warn" | "fail" | "skip"; detail: string;
+}
+
+export type NotificationState = "unread" | "read" | "actioned" | "dismissed";
+export interface Notification {
+  id: number; created_at: string; type: string; severity: "info" | "warning" | "error";
+  message: string; context: Record<string, unknown> | null; state: NotificationState;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public fields: Record<string, string> = {}) {
     super(message);
@@ -203,4 +213,14 @@ export const Api = {
   createToken: (name: string) => api<{ id: number; name: string; token: string }>("POST", "/api/tokens", { name }),
   deleteToken: (id: number) => api("DELETE", `/api/tokens/${id}`),
   system: () => api<SystemInfo>("GET", "/api/system"),
+  diag: () => api<{ ok: boolean; checks: DiagCheck[] }>("GET", "/api/diag"),
+  deviceNames: () => api<Record<string, string>>("GET", "/api/device-names"),
+  setDeviceName: (ip: string, name: string) => api<{ ip: string; name: string }>("PUT", `/api/device-names/${ip}`, { name }),
+  deleteDeviceName: (ip: string) => api("DELETE", `/api/device-names/${ip}`),
+  notifications: (state?: string) =>
+    api<{ unread: number; items: Notification[]; muted: string[] }>("GET", `/api/notifications${state ? `?state=${state}` : ""}`),
+  markAllNotificationsRead: () => api("POST", "/api/notifications/read-all"),
+  setNotificationState: (id: number, state: NotificationState) => api("POST", `/api/notifications/${id}/state`, { state }),
+  muteNotificationType: (type: string) => api("POST", `/api/notifications/mute/${type}`),
+  unmuteNotificationType: (type: string) => api("DELETE", `/api/notifications/mute/${type}`),
 };

@@ -63,6 +63,37 @@ CREATE INDEX IF NOT EXISTS connlog_client ON connection_log (client_ip, started_
 CREATE INDEX IF NOT EXISTS connlog_started ON connection_log (started_at);
 CREATE INDEX IF NOT EXISTS connlog_open ON connection_log (fid, proto, client_ip, client_port, started_at)
     WHERE ended_at IS NULL;
+
+-- A human name for a client address, purely cosmetic - never used for matching or access control,
+-- just so the live-connections table, Connections page, and audit log can say "Dad's laptop" instead
+-- of "192.168.88.67". Keyed by address rather than by, say, a MAC, since that's all a connection ever
+-- actually carries; a device that changes address needs renaming, same as any DHCP-based network.
+CREATE TABLE IF NOT EXISTS device_names (
+    ip TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- In-app alerts for things worth knowing about without watching the dashboard - distinct from
+-- `audit`, which is "who changed what," not "something happened." state moves unread -> read
+-- (seen, nothing more to say) or -> actioned/dismissed (an explicit choice the user made about it).
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    message TEXT NOT NULL,
+    context TEXT,
+    state TEXT NOT NULL DEFAULT 'unread'
+);
+CREATE INDEX IF NOT EXISTS notif_state ON notifications (state, id);
+
+-- A muted type stops producing new notifications (the "skip this kind of alert in future" action)
+-- until explicitly unmuted; existing notifications of that type are unaffected.
+CREATE TABLE IF NOT EXISTS notification_mutes (
+    type TEXT PRIMARY KEY,
+    muted_at TEXT NOT NULL
+);
 """
 
 
@@ -199,6 +230,61 @@ class Store:
         before = len(self._q("SELECT 1 FROM tokens WHERE id=?", (tid,)))
         self._x("DELETE FROM tokens WHERE id=?", (tid,))
         return bool(before)
+
+    # ---- device names -------------------------------------------------------
+    def device_names(self) -> dict[str, str]:
+        return {r["ip"]: r["name"] for r in self._q("SELECT ip, name FROM device_names")}
+
+    def set_device_name(self, ip: str, name: str):
+        self._x("INSERT INTO device_names (ip, name, created_at) VALUES (?,?,?) "
+                "ON CONFLICT(ip) DO UPDATE SET name=excluded.name", (ip, name, _now()))
+
+    def delete_device_name(self, ip: str) -> bool:
+        before = len(self._q("SELECT 1 FROM device_names WHERE ip=?", (ip,)))
+        self._x("DELETE FROM device_names WHERE ip=?", (ip,))
+        return bool(before)
+
+    # ---- notifications --------------------------------------------------------
+    def is_muted(self, type_: str) -> bool:
+        return bool(self._q("SELECT 1 FROM notification_mutes WHERE type=?", (type_,)))
+
+    def muted_types(self) -> list[str]:
+        return [r["type"] for r in self._q("SELECT type FROM notification_mutes")]
+
+    def mute_type(self, type_: str):
+        self._x("INSERT OR REPLACE INTO notification_mutes (type, muted_at) VALUES (?,?)", (type_, _now()))
+
+    def unmute_type(self, type_: str):
+        self._x("DELETE FROM notification_mutes WHERE type=?", (type_,))
+
+    def add_notification(self, type_: str, severity: str, message: str, context: Optional[dict] = None):
+        if self.is_muted(type_):
+            return
+        self._x("INSERT INTO notifications (created_at, type, severity, message, context) VALUES (?,?,?,?,?)",
+                (_now(), type_, severity, message, json.dumps(context) if context is not None else None))
+
+    def notifications(self, limit: int = 100, state: Optional[str] = None) -> list[dict]:
+        if state:
+            rows = self._q("SELECT * FROM notifications WHERE state=? ORDER BY id DESC LIMIT ?", (state, limit))
+        else:
+            rows = self._q("SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (limit,))
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["context"] = json.loads(d["context"]) if d["context"] else None
+            out.append(d)
+        return out
+
+    def unread_notification_count(self) -> int:
+        return self._q("SELECT COUNT(*) c FROM notifications WHERE state='unread'")[0]["c"]
+
+    def set_notification_state(self, nid: int, state: str) -> bool:
+        before = len(self._q("SELECT 1 FROM notifications WHERE id=?", (nid,)))
+        self._x("UPDATE notifications SET state=? WHERE id=?", (state, nid))
+        return bool(before)
+
+    def mark_all_notifications_read(self):
+        self._x("UPDATE notifications SET state='read' WHERE state='unread'")
 
     # ---- audit ------------------------------------------------------------
     def audit(self, actor: str, action: str, target: str = "", detail=None):

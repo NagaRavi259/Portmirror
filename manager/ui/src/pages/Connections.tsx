@@ -1,5 +1,6 @@
 import { Radio, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { ClientLabel } from "../components/ClientLabel";
 import { Card, Empty, ProtoBadge, Segmented, Spinner, StatusDot, cx } from "../components/ui";
 import { Api, ConnectionLogEntry, ConnectionLogSummaryRow, Forward } from "../lib/api";
 import { bytes, datetime, duration, ports } from "../lib/format";
@@ -11,7 +12,9 @@ function forwardLabel(forwards: Forward[], fid: number): string {
   return f ? `${f.name} (:${ports(f.listen_port, f.listen_port_end)})` : `#${fid}`;
 }
 
-export function Connections({ forwards }: { forwards: Forward[] }) {
+export function Connections({ forwards, deviceNames, onDeviceNamesChanged }: {
+  forwards: Forward[]; deviceNames: Record<string, string>; onDeviceNamesChanged: () => void;
+}) {
   const [view, setView] = useState<View>("recent");
   const [rows, setRows] = useState<ConnectionLogEntry[]>([]);
   const [summary, setSummary] = useState<ConnectionLogSummaryRow[]>([]);
@@ -103,7 +106,10 @@ export function Connections({ forwards }: { forwards: Forward[] }) {
                       return (
                         <tr key={r.id} className="border-b border-line/70 last:border-0 hover:bg-canvas/60">
                           <td className="px-5 py-2.5"><StatusDot state={live ? "up" : "off"} pulse={live} /></td>
-                          <td className="px-5 py-2.5 text-ink-900">{r.client_ip}<span className="text-ink-400">:{r.client_port}</span></td>
+                          <td className="px-5 py-2.5 text-ink-900">
+                            <ClientLabel ip={r.client_ip} deviceNames={deviceNames} onChanged={onDeviceNamesChanged} />
+                            <span className="text-ink-400">:{r.client_port}</span>
+                          </td>
                           <td className="px-5 py-2.5"><span className="mr-1.5 inline-block align-middle"><ProtoBadge protocol={r.proto} /></span>
                             <span className="font-sans text-ink-700">{forwardLabel(forwards, r.fid)}</span></td>
                           <td className="px-5 py-2.5 text-ink-500">{datetime(r.started_at)}</td>
@@ -143,7 +149,9 @@ export function Connections({ forwards }: { forwards: Forward[] }) {
                 {summary.map((r) => (
                   <tr key={r.key} className="border-b border-line/70 last:border-0">
                     <td className="px-5 py-3 font-mono text-[12.5px] text-ink-900">
-                      {view === "clients" ? r.key : forwardLabel(forwards, Number(r.key))}
+                      {view === "clients"
+                        ? <ClientLabel ip={r.key} deviceNames={deviceNames} onChanged={onDeviceNamesChanged} />
+                        : forwardLabel(forwards, Number(r.key))}
                     </td>
                     <td className="w-32 px-5 py-3">
                       <div className="h-1.5 overflow-hidden rounded-full bg-ink-950/[.05]">

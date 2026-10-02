@@ -222,6 +222,121 @@ def test_audit_and_tokens(store):
     assert store.token_name("pm_secret") == "ci" and store.token_name("nope") is None
 
 
+# ---- device names -----------------------------------------------------------------
+def test_device_names_set_list_rename_delete(store):
+    assert store.device_names() == {}
+    store.set_device_name("192.168.88.67", "Dad's laptop")
+    store.set_device_name("192.168.88.23", "Kitchen tablet")
+    assert store.device_names() == {"192.168.88.67": "Dad's laptop", "192.168.88.23": "Kitchen tablet"}
+
+    store.set_device_name("192.168.88.67", "Dad's new laptop")   # rename: same IP, new name
+    assert store.device_names()["192.168.88.67"] == "Dad's new laptop"
+    assert len(store.device_names()) == 2, "renaming must update in place, not add a second row"
+
+    assert store.delete_device_name("192.168.88.23") is True
+    assert "192.168.88.23" not in store.device_names()
+    assert store.delete_device_name("192.168.88.23") is False, "deleting an already-gone name reports nothing to delete"
+
+
+# ---- notifications ------------------------------------------------------------------
+class _FakeNotifier:
+    def __init__(self):
+        self.calls = []
+
+    def notify(self, type_, severity, message, context=None):
+        self.calls.append((type_, severity, message, context))
+
+
+def test_notification_crud_and_state_transitions(store):
+    assert store.notifications() == [] and store.unread_notification_count() == 0
+    store.add_notification("target_down", "warning", "X is down", {"forward_id": 1})
+    assert store.unread_notification_count() == 1
+    row = store.notifications()[0]
+    assert row["context"] == {"forward_id": 1} and row["state"] == "unread"
+
+    nid = row["id"]
+    assert store.set_notification_state(nid, "actioned") is True
+    assert store.unread_notification_count() == 0
+    assert store.notifications(state="actioned")[0]["id"] == nid
+    assert store.set_notification_state(999999, "read") is False, "a nonexistent id reports nothing changed"
+
+
+def test_mark_all_notifications_read(store):
+    store.add_notification("target_down", "warning", "a")
+    store.add_notification("target_up", "info", "b")
+    assert store.unread_notification_count() == 2
+    store.mark_all_notifications_read()
+    assert store.unread_notification_count() == 0
+
+
+def test_muted_type_produces_no_new_notification(store):
+    store.mute_type("target_down")
+    assert store.muted_types() == ["target_down"]
+    store.add_notification("target_down", "warning", "should be dropped")
+    assert store.notifications() == [], "a muted type must not even create a row"
+    store.add_notification("target_up", "info", "a different type, unaffected by the mute")
+    assert len(store.notifications()) == 1
+
+    store.unmute_type("target_down")
+    store.add_notification("target_down", "warning", "unmuted again")
+    assert len(store.notifications()) == 2
+
+
+def test_health_flip_only_on_a_real_change():
+    from app.prober import health_flip
+    up, down = {"state": "up"}, {"state": "down"}
+    assert health_flip(None, up) is None, "the first-ever observation must never be treated as a flip"
+    assert health_flip(None, down) is None
+    assert health_flip(up, up) is None, "no change -> no flip"
+    assert health_flip(up, down) == ("target_down", "warning")
+    assert health_flip(down, up) == ("target_up", "info")
+
+
+def test_prober_probe_notifies_through_real_wiring_only_on_flips(monkeypatch):
+    """Exercises Prober.probe() itself end to end (not just the pure health_flip() helper), with the
+    actual TCP connect stubbed out so the result - and so which tick is a "flip" - is deterministic."""
+    import asyncio
+    from app import prober as prober_mod
+
+    outcomes = iter([True, True, False, False])   # up, up (no flip), down (flip), down (no flip)
+
+    async def fake_open_connection(*a, **kw):
+        if next(outcomes):
+            class W:
+                def close(self):
+                    pass
+            return None, W()
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
+    notifier = _FakeNotifier()
+    f = fwd(1)
+    p = prober_mod.Prober(lambda: [f], notifier)
+
+    asyncio.run(p.probe(f))   # 1st: up, prev is None -> no notification ever on first sight
+    assert notifier.calls == []
+    asyncio.run(p.probe(f))   # 2nd: still up -> no flip
+    assert notifier.calls == []
+    asyncio.run(p.probe(f))   # 3rd: down -> a real flip
+    assert len(notifier.calls) == 1 and notifier.calls[0][0] == "target_down"
+    asyncio.run(p.probe(f))   # 4th: still down -> no second notification
+    assert len(notifier.calls) == 1
+
+
+def test_login_notifies_once_at_the_failure_threshold_not_before_or_repeatedly(store):
+    from app.auth import Auth
+    from fastapi import HTTPException
+    notifier = _FakeNotifier()
+    a = Auth(store, notifier)
+    for i in range(5):
+        try:
+            a.login("admin", "wrong", "10.0.0.5")
+        except HTTPException:
+            pass
+    assert notifier.calls == [("login_failures", "error", "Repeated failed logins from 10.0.0.5",
+                               {"ip": "10.0.0.5"})], "must fire exactly once, at the 3rd failure, not on every one"
+
+
 # ---- retention ------------------------------------------------------------------
 def test_retention_parsing(monkeypatch):
     for raw, want in (("", None), ("0", None), ("30", 30 * 86400), ("0.5", 43200)):
@@ -530,3 +645,70 @@ def test_collector_does_not_relog_a_flow_lingering_in_time_wait(store):
     c._track_connection_log({}, time.time())
     c._track_connection_log({1: [_flow(state="ESTABLISHED", bytes_in=10, bytes_out=20)]}, time.time())
     assert len(store.connection_log(forward_id=1)) == 2, "a genuinely new connection must still be tracked"
+
+
+# ---- diag: threshold functions (pure, no kernel/process access needed) -----------
+def test_conntrack_status_thresholds():
+    from app import diag
+    assert diag.conntrack_status(0, 0) == ("skip", "not reported by this kernel")
+    assert diag.conntrack_status(100, 10000)[0] == "ok"
+    assert diag.conntrack_status(8000, 10000)[0] == "warn"     # 80%
+    assert diag.conntrack_status(9500, 10000)[0] == "fail"     # 95%
+    assert diag.conntrack_status(7499, 10000)[0] == "ok"       # just under the 75% warn line
+    assert diag.conntrack_status(7500, 10000)[0] == "warn"     # exactly on the warn line
+
+
+def test_disk_status_thresholds():
+    from app import diag
+    assert diag.disk_status(0, 0) == ("skip", "not available")
+    assert diag.disk_status(50, 100)[0] == "ok"        # 50% free
+    assert diag.disk_status(10, 100)[0] == "warn"      # 10% free
+    assert diag.disk_status(3, 100)[0] == "fail"       # 3% free
+
+
+def test_memory_status_thresholds():
+    from app import diag
+    assert diag.memory_status(0, 0) == ("skip", "no limit reported")
+    assert diag.memory_status(50, 100)[0] == "ok"      # 50% used
+    assert diag.memory_status(90, 100)[0] == "warn"    # 90% used
+    assert diag.memory_status(99, 100)[0] == "fail"    # 99% used
+
+
+def test_iface_status():
+    from app import diag
+    assert diag.iface_status("up") == ("ok", "up")
+    assert diag.iface_status("missing")[0] == "fail"
+    assert diag.iface_status("down")[0] == "fail"
+    assert diag.iface_status("unknown")[0] == "fail"   # no silent pass on an unreadable state
+
+
+def test_target_health_status():
+    from app import diag
+    assert diag.target_health_status([]) == ("skip", "no enabled forwards to probe")
+    assert diag.target_health_status([None, None]) == ("skip", "no enabled forwards to probe")
+    assert diag.target_health_status([{"state": "up"}, {"state": "up"}])[0] == "ok"
+    status, detail = diag.target_health_status([{"state": "up"}, {"state": "down"}])
+    assert status == "fail" and "1/2" in detail
+
+
+def test_diag_run_produces_every_expected_check(store):
+    """Integration-ish: run() against a real (if minimal) manager/collector/prober, not mocks for
+    every field - confirms the check list is complete and every check returns a well-formed result,
+    without needing a real kernel table or real interfaces to exist in this test environment."""
+    import asyncio
+    from app import diag
+    from app.collector import Collector
+    from app.prober import Prober
+    from app.service import Manager
+
+    manager = Manager(store)
+    prober = Prober(manager.forwards)
+    collector = Collector(store, manager.forwards, prober)
+
+    checks = asyncio.run(diag.run(manager, collector, prober))
+    ids = {c["id"] for c in checks}
+    assert ids == {"nft_syntax", "kernel_table", "vpn_route", "lan_iface", "vpn_iface",
+                   "conntrack", "disk", "memory", "target_health", "restarts"}
+    for c in checks:
+        assert c["status"] in ("ok", "warn", "fail", "skip"), c
+        assert c["label"] and c["detail"]

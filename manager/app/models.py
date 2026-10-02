@@ -123,6 +123,19 @@ class TokenIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
+class DeviceNameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        return v.strip()
+
+
+class NotificationStateIn(BaseModel):
+    state: Literal["read", "actioned", "dismissed"]
+
+
 class KillConnIn(BaseModel):
     protocol: Literal["tcp", "udp"]
     src: IPv4Address

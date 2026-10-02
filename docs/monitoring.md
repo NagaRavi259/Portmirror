@@ -37,11 +37,20 @@ journalctl -u portmirror-manager -u portmirror-base --no-pager -n 400   # recent
 journalctl -u portmirror-manager -u portmirror-base --no-pager -p warning   # warnings and errors only, all history
 ```
 
+## Diagnostics ("Doctor")
+
+Before reaching for the manual sweep below, try the built-in one: the **Diagnostics** page in the dashboard, or
+`pmctl diag` from a shell, runs ten checks in one pass — ruleset syntax, kernel table presence, route to the
+VPN network, LAN/VPN interface state, conntrack usage, disk, memory, target health, and (on a Pi) service
+restart counts — and reports each as ok / warning / failing / not applicable. It won't catch everything the
+manual sweep below does (it doesn't read service logs, for instance), but it covers most of what "something
+seems off, what's going on" actually turns out to be, in seconds, without pasting a log dump anywhere.
+
 ## A full diagnostic sweep
 
-This is the single most useful command for "something seems off, what's going on" — it pulls service logs,
-restart history, live application health, kernel ruleset state, storage, and basic resource usage in one pass.
-Run it on the Pi (or inside the gateway container, substituting the paths):
+This still pulls more than the one-click version above does — service logs, restart history, kernel ruleset
+state, storage, and basic resource usage in one pass. Run it on the Pi (or inside the gateway container,
+substituting the paths):
 
 ```bash
 {

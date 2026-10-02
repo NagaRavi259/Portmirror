@@ -1,15 +1,21 @@
 # Roadmap
 
+## Selected and actively planned
+
+A batch of ten features has moved from "idea" to "planned, with test cases" - see
+[`feature-checklist.md`](feature-checklist.md) for the checkbox-tracked list: a diagnostics page, device
+nicknames, in-app alerting, service presets, dark mode, recurring access windows, a bandwidth quota (bytes over
+a period, distinct from the realtime kbit/s cap already shipped), CSV export, readable audit-log diffs, and a
+PWA manifest. That document is the source of truth for those ten going forward, not this one.
+
 ## Under consideration
 
-Grouped by theme, not yet prioritized.
+Everything else: grouped by theme, not yet prioritized, not yet planned in detail.
 
 **Operational visibility**
-- A built-in diagnostics page (or command) that runs the standard health checks — ruleset validity, route to
-  the remote network, interface status, storage and resource use, recent restarts — and shows the result
-  directly, instead of needing a manual log-collection pass.
-- Notifications (webhook, a push-notification service, or a messaging-platform integration) when a target's
-  health flips, or when logins start failing repeatedly.
+- Notifications delivered outside the app itself (webhook, a push-notification service, or a messaging-platform
+  integration) when a target's health flips, or when logins start failing repeatedly - distinct from the
+  in-app notification center in `feature-checklist.md`, which doesn't need any of this.
 - A resource-usage trend on the dashboard (CPU and memory over time), not just the instantaneous reading.
 - A per-forward way to turn off health probing entirely. Would also resolve a known, understood, cosmetic
   side effect: probing a target that's picky about unexpected connections (`iperf3` is one - see
@@ -18,14 +24,8 @@ Grouped by theme, not yet prioritized.
   like this) rather than just adding an on/off switch.
 
 **Usability**
-- Service presets for common targets (RDP, VNC, SSH, common self-hosted services) that pre-fill a new
-  forward's protocol and port.
-- Resolving a forward's target by hostname instead of a fixed address, so it keeps working if the target's
-  address changes.
-- Human-readable names for known client addresses, so the live-connections view doesn't show raw addresses.
-- A dark theme.
-- Recurring time-based access windows for a forward (only active during certain hours), beyond the existing
-  one-shot auto-expiry.
+- Resolving a forward's target by hostname instead of a fixed address. Considered and explicitly set aside -
+  see `feature-checklist.md`'s "needs a decision" section for why.
 
 **Access and sharing**
 - Read-only accounts, for sharing the dashboard without granting control.
@@ -35,12 +35,6 @@ Grouped by theme, not yet prioritized.
 **Scale and integration**
 - Support for more than one remote network/VPN interface at once, if a second remote site is ever added.
 - A metrics endpoint in a standard scrape format, for anyone already running their own monitoring stack.
-- Per-forward bandwidth quotas (total bytes over a period), beyond the existing new-connection rate limit.
-
-**Smaller polish**
-- A readable diff view for audit log entries, instead of a raw before/after dump.
-- CSV export for history and the audit log.
-- A home-screen-installable version of the dashboard on mobile.
 
 ## On hold
 

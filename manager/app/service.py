@@ -14,8 +14,9 @@ log = logging.getLogger("pm.service")
 
 
 class Manager:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, notifier=None):
         self.store = store
+        self.notifier = notifier
         self.lock = asyncio.Lock()
         self._cache: list[Forward] = store.forwards()
         self.on_change = lambda: None   # collector bumps its version here
@@ -158,6 +159,9 @@ class Manager:
                     if f.enabled and f.expired():
                         await self.toggle(f.id, False, "system", kill=False)
                         self.store.audit("system", "forward.expire", f"#{f.id} {f.name}")
+                        if self.notifier:
+                            self.notifier.notify("forward_expired", "info", f"“{f.name}” turned off - its expiry time passed",
+                                                 {"forward_id": f.id})
                 if config.HOLD_FILE.exists():
                     continue
                 # under the lock, so a create/update that is mid-apply isn't mistaken for drift
@@ -172,6 +176,8 @@ class Manager:
                         self._refresh()
                 if drift:
                     self.store.audit("system", "kernel.drift_repaired")
+                    if self.notifier:
+                        self.notifier.notify("kernel_drift", "warning", "The firewall ruleset had drifted from what was configured and was repaired automatically")
             except Exception:
                 log.exception("housekeeping failed")
 
