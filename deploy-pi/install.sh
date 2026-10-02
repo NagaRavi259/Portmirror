@@ -39,8 +39,8 @@ echo "== 2. System packages =="
 apt-get update -qq
 apt-get install -y --no-install-recommends \
   python3 python3-venv python3-pip nftables conntrack iproute2 iputils-ping \
-  build-essential libffi-dev >/dev/null
-for bin in nft conntrack ping python3; do
+  build-essential libffi-dev curl rsync >/dev/null
+for bin in nft conntrack ping python3 curl rsync; do
   command -v "$bin" >/dev/null || { echo "ERROR: $bin still missing after install" >&2; exit 1; }
 done
 
@@ -49,7 +49,12 @@ install -d /opt/portmirror
 rsync -a --delete ../manager/app/ /opt/portmirror/app/
 rsync -a --delete ../manager/ui/dist/ /opt/portmirror/ui/
 cp ../manager/requirements.txt /opt/portmirror/requirements.txt
+install -m 755 update.sh /opt/portmirror/update.sh
 install -m 755 pmctl /usr/local/bin/pmctl
+# `pmctl update` compares against this. Installing straight from a dev checkout (not a
+# release tarball) has no release version to record, so it's marked "dev" - any real
+# release will look newer than that and `pmctl update` will offer to move onto one.
+[ -f /opt/portmirror/VERSION ] || echo "dev" > /opt/portmirror/VERSION
 
 if [ ! -d /opt/portmirror/venv ]; then
   python3 -m venv /opt/portmirror/venv
@@ -89,3 +94,4 @@ UI_PORT=$(grep -oP 'PM_UI_PORT=\K.*' /etc/portmirror/portmirror.env)
 echo "Open http://${GW_LAN_IP}:${UI_PORT} from a LAN device."
 echo "Admin password: run 'pmctl password' on this Pi."
 echo "Add your first forward through the UI - none are seeded by default."
+echo "Check for updates any time with 'pmctl update'."

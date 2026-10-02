@@ -1,0 +1,49 @@
+name: release
+
+# Pushing a version tag (v1.2.3) builds the UI, packages a release tarball, and
+# publishes it as a GitHub release - the artifact `pmctl update` on a deployed
+# gateway downloads. Nothing else triggers this: ordinary commits to main do not
+# cut a release, so pushing code and shipping a version stay separate decisions.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build the UI
+        working-directory: manager/ui
+        run: |
+          npm ci --no-audit --no-fund
+          npx vite build
+
+      - name: Package the release
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          STAGE="$(mktemp -d)/portmirror-${VERSION}"
+          mkdir -p "$STAGE"
+          cp -r manager/app "$STAGE/app"
+          cp -r manager/ui/dist "$STAGE/ui"
+          cp manager/requirements.txt "$STAGE/requirements.txt"
+          cp deploy-pi/update.sh "$STAGE/update.sh"
+          chmod +x "$STAGE/update.sh"
+          echo "$VERSION" > "$STAGE/VERSION"
+          tar -czf "portmirror-${VERSION}.tar.gz" -C "$(dirname "$STAGE")" "portmirror-${VERSION}"
+          echo "ASSET=portmirror-${VERSION}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}
+          generate_release_notes: true

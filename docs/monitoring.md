@@ -22,6 +22,7 @@ browser.
 | Force a rule rebuild | `docker exec pm-E pmctl reapply` | `pmctl reapply` |
 | Show the admin password (until changed) | `docker exec pm-E pmctl password` | `pmctl password` |
 | Create an API token | `docker exec pm-E pmctl token <name>` | `pmctl token <name>` |
+| Check for / install an update | n/a — see [`updates.md`](updates.md) for Docker | `pmctl update` |
 
 On a native Pi install, `pmctl` needs root (it reads a deliberately root-only internal token) and elevates
 itself automatically via `sudo` when not already running as one.

@@ -72,6 +72,7 @@ first forward.
 - [`docs/installation-docker.md`](docs/installation-docker.md) — Docker setup and configuration
 - [`docs/installation-raspberry-pi.md`](docs/installation-raspberry-pi.md) — native Raspberry Pi setup
 - [`docs/monitoring.md`](docs/monitoring.md) — using the dashboard, `pmctl`, and diagnosing problems
+- [`docs/updates.md`](docs/updates.md) — how releases are cut and how a deployment updates to one
 - [`docs/testing.md`](docs/testing.md) — the test suites and how to run them
 - [`docs/progress.md`](docs/progress.md) — what's validated, what isn't yet
 - [`docs/fixed-issues.md`](docs/fixed-issues.md) — real bugs found during development and deployment, and how they were fixed

@@ -2,6 +2,7 @@
 
   pmctl status | forwards | reapply | token <name> | password
   pmctl api <METHOD> <path> [json-body]
+  pmctl update [check | --yes]   check GitHub for a newer release, or install one
 """
 import json
 import sys

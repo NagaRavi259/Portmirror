@@ -1,6 +1,8 @@
 #!/bin/sh
 # Native (non-Docker) equivalent of the container's `pmctl` - installed by
-# install.sh to /usr/local/bin/pmctl. See ../manager/app/cli.py for commands.
+# install.sh to /usr/local/bin/pmctl. See ../manager/app/cli.py for commands,
+# and update.sh for `update` (a plain file/service operation, not an API call,
+# so it bypasses the Python CLI entirely).
 #
 # internal.token is intentionally root-only (0600) - any other logged-in user
 # on the Pi could otherwise read it and get full admin API access. So this
@@ -8,6 +10,10 @@
 # crashing with a raw PermissionError traceback (a real one hit in testing).
 if [ "$(id -u)" != "0" ]; then
   exec sudo -E "$0" "$@"
+fi
+if [ "${1:-}" = "update" ]; then
+  shift
+  exec /opt/portmirror/update.sh "$@"
 fi
 export PM_STATE_DIR="${PM_STATE_DIR:-/var/lib/portmirror}"
 export PM_UI_PORT="${PM_UI_PORT:-8088}"

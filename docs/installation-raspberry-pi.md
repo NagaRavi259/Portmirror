@@ -110,6 +110,15 @@ journalctl -u portmirror-manager -f
 Check masquerade from the target's own point of view too — it should see the gateway's VPN-side address, never
 the real local client's.
 
+## Updating later
+
+```bash
+pmctl update
+```
+
+Checks GitHub for a newer release, shows what's new, and asks before installing it. See
+[`updates.md`](updates.md) for the full flow and how releases get cut in the first place.
+
 ## Uninstall
 
 ```bash
