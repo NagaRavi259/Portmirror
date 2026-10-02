@@ -37,11 +37,21 @@
   live for smoothness after the first version showed correct average throughput but a bursty, stalling pattern
   at low caps.
 
+- **GitHub-based updates**: pushing a version tag builds and publishes a release automatically; GitHub is the
+  only source of deployable software now, not ad-hoc file copies. The update script's own logic — the version
+  check, the download, the install, and both rollback outcomes (previous version restarts fine / also fails to
+  restart) — is verified against a simulated install, including the two real releases this verification itself
+  shipped (one of which carried a fix for a bug the testing found: see
+  [`fixed-issues.md`](fixed-issues.md)). Running `pmctl update` against a real, running Pi install is still
+  outstanding — see below.
+
 ## Outstanding
 
 These need a specific real event on physical hardware to exercise directly, rather than a Docker-based
 simulation of one:
 
+- Running `pmctl update` against the real deployed Pi (verified so far only against a simulated install on a
+  dev machine, with `systemctl` itself stubbed out)
 - A deliberate VPN-unit restart (as opposed to the gateway's own restart, already confirmed)
 - A remote target device restarting mid-session
 - The tunnel interface keeping a stable name across a real VPN reconnect (a renamed interface is known to
