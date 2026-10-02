@@ -68,3 +68,13 @@ simulation of one:
   overflow counters under heavy concurrent load; client-side retries absorb this with zero failed requests, and
   the gateway's own connection-tracking counters stay clean throughout. This is a property of that particular
   backend, not of the gateway.
+- Forwarding `iperf3` to a target makes that target's own server log a "Bad file descriptor" cookie-handshake
+  error on a fixed interval, forever, with zero real clients involved. The cause is understood precisely: the
+  gateway's own health probe does a plain TCP connect-then-disconnect with no data sent, which is harmless for
+  every other service type tested, but trips a known fragility in how `iperf3`'s server manages its accept loop
+  (worse with its default dual IPv4/IPv6 listening setup) - it always expects the very next bytes after
+  accepting a connection to be its own handshake cookie, and logs an error when a connection closes before
+  that happens. This is cosmetic noise in the target's own log, not a defect in the forward itself - a real
+  `iperf3` test still runs and measures correctly alongside it. Worth a proper look later (see
+  [`roadmap.md`](roadmap.md)) rather than a quick fix now, since the real fix is a per-forward way to turn
+  health probing off entirely, which is a small feature of its own rather than a one-line change.

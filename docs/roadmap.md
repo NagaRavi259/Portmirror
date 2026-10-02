@@ -11,6 +11,11 @@ Grouped by theme, not yet prioritized.
 - Notifications (webhook, a push-notification service, or a messaging-platform integration) when a target's
   health flips, or when logins start failing repeatedly.
 - A resource-usage trend on the dashboard (CPU and memory over time), not just the instantaneous reading.
+- A per-forward way to turn off health probing entirely. Would also resolve a known, understood, cosmetic
+  side effect: probing a target that's picky about unexpected connections (`iperf3` is one - see
+  [`progress.md`](progress.md)) makes it log its own error on a fixed interval, harmlessly, forever. Worth
+  researching properly (is a plain connect-probe the only option, or is there a gentler check for services
+  like this) rather than just adding an on/off switch.
 
 **Usability**
 - Service presets for common targets (RDP, VNC, SSH, common self-hosted services) that pre-fill a new
