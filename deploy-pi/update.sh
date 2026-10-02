@@ -78,8 +78,15 @@ roll_back() {
   systemctl stop portmirror-manager.service portmirror-base.service 2>/dev/null || true
   rm -rf "$INSTALL_DIR"
   mv "$INSTALL_DIR.bak" "$INSTALL_DIR"
-  systemctl start portmirror-base.service portmirror-manager.service
-  echo "Rolled back. The update to $latest was NOT applied." >&2
+  # Checked explicitly, not left to `set -e`: if the rollback's own restart also fails, that's a
+  # worse, different situation (the previous version won't come up either) and deserves its own
+  # clear message - not a script that silently stops partway through rolling back.
+  if systemctl start portmirror-base.service portmirror-manager.service; then
+    echo "Rolled back. The update to $latest was NOT applied." >&2
+  else
+    echo "Rolled the files back to $current, but it also failed to restart - check" \
+         "'systemctl status portmirror-base portmirror-manager' by hand." >&2
+  fi
   exit 1
 }
 
