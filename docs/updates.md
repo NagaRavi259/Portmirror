@@ -33,8 +33,9 @@ This is the whole workflow in one command, modeled on `apt update && apt upgrade
    changed.
 2. **Show** — if a newer release exists, prints its version and release notes.
 3. **Ask** — waits for a `y`/`N` confirmation before touching anything running.
-4. **Apply** — downloads the release tarball, stops the services, replaces the application files and the
-   updater script itself, reinstalls Python dependencies if they changed, and restarts the services.
+4. **Apply** — downloads the release tarball, stops the services, replaces the application files, the `pmctl`
+   command itself, and the updater script, reinstalls Python dependencies if they changed, and restarts the
+   services. `pmctl` stays current through this same flow, not just the backend and UI.
 
 `pmctl update check` only does step 1 — useful for checking without being asked anything (exit code `2` means
 an update is available, `0` means already current). `pmctl update --yes` skips the confirmation prompt, for a
