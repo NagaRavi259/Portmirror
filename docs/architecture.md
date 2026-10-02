@@ -64,6 +64,27 @@ Ending a connection for real means its next packet has to be rejected outright. 
 handles this: a cut connection's packets are matched against it and get a TCP reset (or are dropped, for UDP)
 before the conntrack entry is removed.
 
+## Bandwidth shaping
+
+A forward can also cap its own throughput, independently of every other forward, in each direction. This is a
+separate mechanism from the rest of the ruleset above, layered on top of it rather than built into it:
+
+- A forward with a limit set gets one extra, otherwise-inert rule in its per-forward chain: mark every packet
+  of that forward's connections, in both directions, with the forward's own id. Nothing reads that mark unless
+  shaping is actually in use, so it costs nothing for every other forward.
+- On each of the gateway's two interfaces, a shared traffic-control tree holds one class per shaped forward,
+  sized to that forward's own limit, selected purely by matching the mark just set. A forward with no limit
+  never gets marked and so never leaves that tree's default, unrestricted class.
+- Each class also gets its own fair-queuing leaf. A hard rate cap alone, squeezing a connection down to a small
+  fraction of the interface's real capacity, holds the right long-run average but does it in sharp bursts
+  separated by stalls; the extra leaf trades a bit of packet loss for a steady, accurately-capped line instead
+  — the same trade-off any real bandwidth limiter (a home router's QoS, an ISP's own throttling) makes.
+- Rebuilding this tree is best-effort and separate from the main ruleset's own all-or-nothing apply: if the
+  underlying mechanism is ever unavailable, a forward simply runs unshaped rather than failing to apply at all.
+
+This is a steady-state throughput cap (kbit/s, sustained), not a quota — see the roadmap for the different,
+not-yet-built idea of a total-bytes-over-a-period limit.
+
 ## Target health and metrics
 
 A background task probes every enabled forward's target every few seconds — a TCP connect for TCP/TCP+UDP

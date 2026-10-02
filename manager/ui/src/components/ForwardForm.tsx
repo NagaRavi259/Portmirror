@@ -21,7 +21,7 @@ type Expiry = "never" | "1h" | "8h" | "24h" | "7d" | "custom";
 
 interface State {
   name: string; protocol: Protocol; listen: string; listenEnd: string; useRange: boolean;
-  targetIp: string; targetPort: string; sources: string[]; rateLimit: string; maxConns: string;
+  targetIp: string; targetPort: string; sources: string[]; rateLimit: string; maxConns: string; bandwidthLimit: string;
   expiry: Expiry; expiresCustom: string; enabled: boolean; description: string;
 }
 
@@ -35,7 +35,9 @@ function initial(f?: Forward, lanNet = "192.168.88.0/24"): State {
     listenEnd: f?.listen_port_end ? String(f.listen_port_end) : "", useRange: !!f?.listen_port_end,
     targetIp: f?.target_ip ?? "", targetPort: f ? String(f.target_port) : "",
     sources: f?.allowed_sources ?? [lanNet], rateLimit: f?.rate_limit ? String(f.rate_limit) : "",
-    maxConns: f?.max_conns ? String(f.max_conns) : "", expiry: f?.expires_at ? "custom" : "never",
+    maxConns: f?.max_conns ? String(f.max_conns) : "",
+    bandwidthLimit: f?.bandwidth_limit_kbps ? String(f.bandwidth_limit_kbps) : "",
+    expiry: f?.expires_at ? "custom" : "never",
     expiresCustom: f?.expires_at ? toLocal(f.expires_at) : "", enabled: f?.enabled ?? true, description: f?.description ?? "",
   };
 }
@@ -49,7 +51,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
   const [serverErr, setServerErr] = useState<{ msg: string; fields: Record<string, string> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [srcDraft, setSrcDraft] = useState("");
-  const [showAdv, setShowAdv] = useState(!!(forward?.rate_limit || forward?.max_conns || forward?.expires_at));
+  const [showAdv, setShowAdv] = useState(!!(forward?.rate_limit || forward?.max_conns || forward?.bandwidth_limit_kbps || forward?.expires_at));
   const [killOld, setKillOld] = useState(false);
   const set = <K extends keyof State>(k: K, v: State[K]) => setS((x) => ({ ...x, [k]: v }));
 
@@ -81,6 +83,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
     if (!s.sources.length) e.sources = "Add at least one allowed source";
     if (s.rateLimit && !(Number(s.rateLimit) >= 1)) e.rateLimit = "≥ 1";
     if (s.maxConns && !(Number(s.maxConns) >= 1)) e.maxConns = "≥ 1";
+    if (s.bandwidthLimit && !(Number(s.bandwidthLimit) >= 1)) e.bandwidthLimit = "≥ 1";
     if (s.expiry === "custom" && !s.expiresCustom) e.expiry = "Pick a date and time";
     if (!e.listen && !e.listenEnd && s.enabled) {
       const protos = s.protocol === "both" ? ["tcp", "udp"] : [s.protocol];
@@ -124,7 +127,9 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
     const body: ForwardBody = {
       name: s.name.trim(), protocol: s.protocol, listen_port: lp, listen_port_end: le, target_ip: s.targetIp,
       target_port: tp, allowed_sources: s.sources, rate_limit: s.rateLimit ? Number(s.rateLimit) : null,
-      max_conns: s.maxConns ? Number(s.maxConns) : null, expires_at: expiresAt(), enabled: s.enabled,
+      max_conns: s.maxConns ? Number(s.maxConns) : null,
+      bandwidth_limit_kbps: s.bandwidthLimit ? Number(s.bandwidthLimit) : null,
+      expires_at: expiresAt(), enabled: s.enabled,
       description: s.description.trim(),
     };
     setSaving(true);
@@ -265,6 +270,10 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
                     onChange={(e) => set("maxConns", e.target.value.replace(/\D/g, ""))} />
                 </Field>
               </div>
+              <Field label="Bandwidth limit" hint="kbit/s, each direction" error={fieldErr("bandwidthLimit", "bandwidth_limit_kbps")}>
+                <input className="input num" inputMode="numeric" placeholder="unlimited" value={s.bandwidthLimit}
+                  onChange={(e) => set("bandwidthLimit", e.target.value.replace(/\D/g, ""))} />
+              </Field>
               <Field label="Auto-disable" error={fieldErr("expiry", "expires_at")}
                 hint={s.expiry === "never" ? "The forward stays on until you turn it off." : "It switches itself off at that time; existing connections drain."}>
                 <div className="flex flex-wrap gap-2">

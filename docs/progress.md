@@ -31,6 +31,11 @@
   [`fixed-issues.md`](fixed-issues.md) for the bugs that surfaced along the way.
 - **Clickable forward links**: an enabled TCP forward's port on the dashboard opens that service directly in a
   new browser tab.
+- **Per-forward bandwidth shaping**: a forward can cap its own throughput (kbit/s, each direction)
+  independently of every other forward. Verified against real traffic with `iperf3` at multiple cap values,
+  confirmed against an unthrottled baseline on the same link (a ~270x difference at a 20 Mbit/s cap), and tuned
+  live for smoothness after the first version showed correct average throughput but a bursty, stalling pattern
+  at low caps.
 
 ## Outstanding
 

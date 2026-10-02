@@ -131,6 +131,13 @@ def build_script(forwards: list[Forward], kernel: KernelState) -> str:
             f'add rule ip {T} f{f.id} ct direction original counter name "f{f.id}_in"',
             f'add rule ip {T} f{f.id} ct direction reply counter name "f{f.id}_out"',
         ]
+        if f.bandwidth_limit_kbps:
+            # This chain already sees every packet of this forward in both directions (that's what
+            # the two counters above are for), so marking here - once, unconditionally - tags both
+            # directions with the forward's own id. `apply_shaping()` then points a tc class at
+            # that exact mark on each egress interface; nothing here depends on which interface a
+            # packet is about to leave on.
+            L.append(f"add rule ip {T} f{f.id} meta mark set {f.id}")
     for f in act:
         for r in prerouting_rules(f):
             L.append(f"add rule ip {T} prerouting {r}")
@@ -213,6 +220,7 @@ async def apply(forwards: list[Forward]) -> str:
     if rc != 0:
         raise NftError(_clean(err))
     write_boot_file(forwards)
+    await apply_shaping(forwards)
     return script
 
 
@@ -236,6 +244,93 @@ async def read_counters() -> dict[str, tuple[int, int]]:
         if c:
             res[c["name"]] = (c.get("packets", 0), c.get("bytes", 0))
     return res
+
+
+# --------------------------------------------------------------------------
+# bandwidth shaping (tc): a forward's own id doubles as both its nftables mark
+# (set above, in the f<id> chain) and its htb class's minor number on each
+# egress interface, so the two sides never need to agree on anything beyond
+# that id. One shared htb tree per interface holds every shaped forward's
+# class side by side; forwards with no bandwidth_limit_kbps never get a mark
+# and so never leave the tree's default class, at native speed.
+# --------------------------------------------------------------------------
+TC_IFACES = (config.LAN_IF, config.VPN_IF)   # reply traffic leaves via lan0, request traffic via vpn0
+HTB_ROOT_RATE = "10gbit"     # nominal ceiling for the shared root class; never actually reached here
+HTB_DEFAULT_RATE = "10gbit"  # unshaped (unmarked) traffic: effectively uncapped
+
+
+def want_bandwidth(forwards: Iterable[Forward]) -> dict[int, int]:
+    return {f.id: f.bandwidth_limit_kbps for f in active(forwards) if f.bandwidth_limit_kbps}
+
+
+def _htb_burst_bytes(kbps: int) -> int:
+    """HTB's own default burst (sized off the interface's HZ/MTU, not the class's own rate) is far too
+    small at low rates - a handful of TCP segments drain it in well under a millisecond, so the flow
+    then sits idle until the next clock tick refills the bucket, and a one-second iperf3 interval ends
+    up alternating between a burst and 0 bps instead of a steady line. Sizing the bucket to roughly
+    50ms of this class's own rate smooths that out, while staying small enough to add negligible
+    latency relative to that 50ms."""
+    bytes_per_sec = kbps * 1000 / 8
+    return max(int(bytes_per_sec * 0.05), 4096)
+
+
+async def _ensure_htb_root(iface: str):
+    rc, out, _ = await run("tc", "qdisc", "show", "dev", iface)
+    if rc == 0 and "htb 1:" in out:
+        return
+    await run("tc", "qdisc", "replace", "dev", iface, "root", "handle", "1:", "htb", "default", "999")
+    await run("tc", "class", "replace", "dev", iface, "parent", "1:", "classid", "1:1", "htb", "rate", HTB_ROOT_RATE)
+    await run("tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", "1:999", "htb",
+             "rate", HTB_DEFAULT_RATE, "ceil", HTB_DEFAULT_RATE)
+
+
+async def _existing_tc_forward_ids(iface: str) -> set[int]:
+    rc, out, _ = await run("tc", "-j", "class", "show", "dev", iface)
+    if rc != 0:
+        return set()
+    ids = set()
+    for item in json.loads(out or "[]"):
+        minor = item.get("handle", "").split(":")[-1]
+        if minor and minor not in ("1", "999", "0"):
+            try:
+                ids.add(int(minor, 16))
+            except ValueError:
+                pass
+    return ids
+
+
+async def apply_shaping(forwards: list[Forward]):
+    """Best-effort: a shaping failure (e.g. htb unavailable on this kernel) never blocks a forward
+    create/update/delete - the forward itself still works, just unshaped."""
+    want = want_bandwidth(forwards)
+    for iface in TC_IFACES:
+        try:
+            if not want and not await _existing_tc_forward_ids(iface):
+                continue   # nothing shaped, nothing to tear down - skip touching the interface at all
+            await _ensure_htb_root(iface)
+            have = await _existing_tc_forward_ids(iface)
+            for fid in have - want.keys():
+                classid = f"1:{fid:x}"
+                await run("tc", "filter", "del", "dev", iface, "parent", "1:", "prio", "1", "handle", str(fid), "fw")
+                await run("tc", "qdisc", "del", "dev", iface, "parent", classid, "handle", f"{fid}:")
+                await run("tc", "class", "del", "dev", iface, "classid", classid)
+            for fid, kbps in want.items():
+                classid, rate, burst = f"1:{fid:x}", f"{kbps}kbit", f"{_htb_burst_bytes(kbps)}b"
+                rc, _, err = await run("tc", "class", "replace", "dev", iface, "parent", "1:1",
+                                       "classid", classid, "htb", "rate", rate, "ceil", rate,
+                                       "burst", burst, "cburst", burst)
+                if rc != 0:
+                    log.warning("tc class replace failed on %s for forward %s: %s", iface, fid, _clean(err))
+                    continue
+                await run("tc", "filter", "replace", "dev", iface, "parent", "1:", "protocol", "ip",
+                         "prio", "1", "handle", str(fid), "fw", "flowid", classid)
+                # htb on its own enforces the right long-run average but, squeezing a TCP flow down to
+                # a small fraction of the interface's real capacity, does it in sharp bursts separated
+                # by stalls - a fair-queuing leaf smooths that into something closer to a steady line,
+                # which is also friendlier to TCP's own rate estimation.
+                await run("tc", "qdisc", "replace", "dev", iface, "parent", classid, "handle", f"{fid}:", "fq_codel")
+        except Exception:
+            log.exception("bandwidth shaping failed on %s", iface)
 
 
 # --------------------------------------------------------------------------

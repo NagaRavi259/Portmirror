@@ -39,6 +39,7 @@ def fwd(fid=1, **kw) -> Forward:
     (dict(allowed_sources=[]), "can't be empty"),
     (dict(listen_port=0), "greater than or equal to 1"),
     (dict(name=""), "at least 1 character"),
+    (dict(bandwidth_limit_kbps=0), "greater than or equal to 1"),
 ])
 def test_rejects(kw, msg):
     base = dict(name="x", protocol="tcp", listen_port=80, target_ip="10.0.0.12", target_port=80)
@@ -122,6 +123,26 @@ def test_expected_rule_count():
     assert engine.expected_prerouting_rules(fs) == 1 + 4
 
 
+# ---- bandwidth shaping: nft marking + the pure tc-target function -----------------
+def test_bandwidth_limited_forward_gets_marked_unlimited_does_not():
+    s = engine.build_script([fwd(1, bandwidth_limit_kbps=500), fwd(2, listen_port=81)], engine.KernelState())
+    assert "add rule ip pm f1 meta mark set 1" in s
+    assert "meta mark set 2" not in s
+
+
+def test_htb_burst_scales_with_rate_and_has_a_floor():
+    assert engine._htb_burst_bytes(5000) == int(5000 * 1000 / 8 * 0.05)
+    assert engine._htb_burst_bytes(20000) == int(20000 * 1000 / 8 * 0.05)
+    assert engine._htb_burst_bytes(1) == 4096          # floor keeps very low rates from an unusably tiny bucket
+
+
+def test_want_bandwidth_ignores_disabled_expired_and_unset():
+    fs = [fwd(1, bandwidth_limit_kbps=1000), fwd(2, listen_port=81),
+         fwd(3, listen_port=82, bandwidth_limit_kbps=2000, enabled=False),
+         fwd(4, listen_port=83, bandwidth_limit_kbps=3000, expires_at=NOW - timedelta(seconds=1))]
+    assert engine.want_bandwidth(fs) == {1: 1000}
+
+
 # ---- generated scripts are valid nftables (dry-run against the real kernel) -------
 def _nft_ok() -> bool:
     if not shutil.which("nft"):
@@ -137,6 +158,7 @@ def _nft_ok() -> bool:
     [fwd(3, protocol="both", listen_port=6000, listen_port_end=6010, target_port=7000, rate_limit=50, max_conns=10,
          allowed_sources=["192.168.88.0/25", "192.168.88.200"])],
     [fwd(4, listen_port=20000, listen_port_end=21023, target_port=20000)],
+    [fwd(6, bandwidth_limit_kbps=500)],
 ])
 def test_nft_accepts(fs):
     for script in (engine.build_script(fs, engine.KernelState()), engine.build_boot_script(fs)):

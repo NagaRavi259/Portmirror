@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Ban, Clock, Pencil, ShieldCheck, Timer, Trash2, Unplug, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Ban, Clock, Gauge, Pencil, ShieldCheck, Timer, Trash2, Unplug, Users } from "lucide-react";
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { TimeChart } from "../components/Charts";
 import { useToast } from "../components/Toasts";
@@ -170,10 +170,11 @@ export function ForwardDetail({ forward, snap, system, onEdit, onRemove, onToggl
             </div>
           </div>
         </div>
-        {(forward.rate_limit || forward.max_conns || forward.expires_at) && (
+        {(forward.rate_limit || forward.max_conns || forward.bandwidth_limit_kbps || forward.expires_at) && (
           <div className="relative flex flex-wrap gap-2 border-t border-line/80 px-5 py-2.5 text-xs">
             {forward.rate_limit && <span className="chip bg-amber-50 text-amber-700"><Clock size={12} /> ≤ {forward.rate_limit} new conns/s</span>}
             {forward.max_conns && <span className="chip bg-amber-50 text-amber-700"><Users size={12} /> ≤ {forward.max_conns} concurrent</span>}
+            {forward.bandwidth_limit_kbps && <span className="chip bg-amber-50 text-amber-700"><Gauge size={12} /> ≤ {bps(forward.bandwidth_limit_kbps * 1000)} each way</span>}
             {forward.expires_at && <span className="chip bg-amber-50 text-amber-700"><Timer size={12} /> {forward.expired ? "expired" : `auto-disables ${until(forward.expires_at)}`}</span>}
           </div>
         )}
@@ -190,6 +191,9 @@ export function ForwardDetail({ forward, snap, system, onEdit, onRemove, onToggl
         <Stat label="Blocked" value={count((st?.rate_limited_total ?? 0) + (st?.conn_limited_total ?? 0))}
           sub={forward.rate_limit || forward.max_conns ? "by limits" : "no limits set"}
           tone={(st?.rate_limited_total ?? 0) + (st?.conn_limited_total ?? 0) > 0 ? "text-amber-600" : undefined} />
+        {forward.bandwidth_limit_kbps != null && (
+          <Stat label="Shaped" value={bps(forward.bandwidth_limit_kbps * 1000)} sub="cap, each direction" tone="text-amber-600" />
+        )}
       </Card>
 
       <div className="flex items-center justify-between">

@@ -20,6 +20,8 @@ class ForwardIn(BaseModel):
     allowed_sources: list[IPv4Network] = Field(default_factory=lambda: [config.LAN_NET])
     rate_limit: Optional[int] = Field(default=None, ge=1, le=100_000, description="max new connections / second")
     max_conns: Optional[int] = Field(default=None, ge=1, le=1_000_000, description="max concurrent connections")
+    bandwidth_limit_kbps: Optional[int] = Field(default=None, ge=1, le=10_000_000,
+                                                description="max throughput, kbit/s, applied separately to each direction")
     expires_at: Optional[datetime] = None
     enabled: bool = True
     description: str = Field(default="", max_length=500)

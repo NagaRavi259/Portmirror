@@ -36,6 +36,7 @@ export interface ForwardBody {
   allowed_sources: string[];
   rate_limit: number | null;
   max_conns: number | null;
+  bandwidth_limit_kbps: number | null;
   expires_at: string | null;
   enabled: boolean;
   description: string;

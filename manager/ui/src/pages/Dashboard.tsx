@@ -237,7 +237,7 @@ export function Dashboard({ forwards, snap, loading, system, onNew, onEdit, onRe
                                 : state === "off" ? (f.expired ? "expired" : "disabled")
                                   : f.health?.latency_ms != null ? <span className="num">{f.health.latency_ms} ms</span> : "checking…"}
                               {f.expires_at && !f.expired && <span className="flex items-center gap-1 text-amber-600"><Timer size={11} />{until(f.expires_at)}</span>}
-                              {(f.rate_limit || f.max_conns) && <span className="chip bg-amber-50 text-amber-700">limited</span>}
+                              {(f.rate_limit || f.max_conns || f.bandwidth_limit_kbps) && <span className="chip bg-amber-50 text-amber-700">limited</span>}
                             </div>
                           </div>
                         </div>
