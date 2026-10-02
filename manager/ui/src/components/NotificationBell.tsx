@@ -57,7 +57,7 @@ export function NotificationBell() {
         className="relative grid h-8 w-8 place-items-center rounded-full text-ink-500 hover:bg-ink-950/[.05] hover:text-ink-900">
         <Bell size={16} />
         {unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-white">
+          <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-oncolor">
             {unread > 9 ? "9+" : unread}
           </span>
         )}

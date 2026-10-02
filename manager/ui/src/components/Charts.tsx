@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef } from "react";
 import uPlot from "uplot";
+import { useTheme } from "../lib/theme";
+
+/** uPlot draws to canvas, not CSS, so its own colors can't just be Tailwind classes - this reads
+ * the SAME CSS custom properties index.css defines per theme, so the chart always matches
+ * whatever the current palette actually is instead of hardcoding a light- or dark-specific value. */
+function cssVar(name: string, alpha = 1): string {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(`--${name}`).trim();
+  return raw ? `rgb(${raw} / ${alpha})` : "transparent";
+}
 
 /** Tiny SVG area sparkline. */
 export function Sparkline({ values, width = 120, height = 32, color = "#4f46e5" }: {
@@ -7,7 +16,7 @@ export function Sparkline({ values, width = 120, height = 32, color = "#4f46e5" 
 }) {
   const id = useMemo(() => `sg${Math.random().toString(36).slice(2)}`, []);
   if (values.length < 2) {
-    return <svg width={width} height={height}><line x1="0" x2={width} y1={height - 1} y2={height - 1} stroke="#e6e9f2" /></svg>;
+    return <svg width={width} height={height}><line x1="0" x2={width} y1={height - 1} y2={height - 1} stroke={cssVar("line")} /></svg>;
   }
   const max = Math.max(...values, 1);
   const step = width / (values.length - 1);
@@ -40,22 +49,25 @@ export function TimeChart({ data, series, height = 220, yFmt, windowS }: {
   win.current = windowS;
   const plot = useRef<uPlot | null>(null);
   const tip = useRef<HTMLDivElement>(null);
+  const theme = useTheme();
 
   useEffect(() => {
     if (!el.current) return;
+    const axisStroke = cssVar("ink-400");
+    const gridStroke = cssVar("line");
     const opts: uPlot.Options = {
       width: el.current.clientWidth,
       height,
       padding: [12, 8, 0, 0],
-      cursor: { points: { size: 7, fill: "#fff", width: 2 }, drag: { x: false, y: false } },
+      cursor: { points: { size: 7, fill: cssVar("surface"), width: 2 }, drag: { x: false, y: false } },
       legend: { show: false },
       scales: { x: { time: true, range: (_u, min, max) => (win.current ? [max - win.current, max] : [min, max]) }, y: { range: (_u, _min, max) => [0, max > 0 ? max * 1.15 : 1] } },
       axes: [
-        { stroke: "#8792ad", grid: { show: false }, ticks: { stroke: "#e6e9f2", width: 1, size: 4 }, font: "11px Inter Variable, sans-serif",
+        { stroke: axisStroke, grid: { show: false }, ticks: { stroke: gridStroke, width: 1, size: 4 }, font: "11px Inter Variable, sans-serif",
           space: 70, incrs: [1, 5, 10, 15, 30, 60, 300, 600, 900, 1800, 3600, 7200, 21600, 43200, 86400, 172800] },
         {
-          stroke: "#8792ad", size: 64, font: "11px JetBrains Mono, monospace",
-          grid: { stroke: "#eef0f6", width: 1 }, ticks: { show: false },
+          stroke: axisStroke, size: 64, font: "11px JetBrains Mono, monospace",
+          grid: { stroke: gridStroke, width: 1 }, ticks: { show: false },
           values: (_u, vals) => vals.map((v) => yFmt(v)),
         },
       ],
@@ -92,9 +104,10 @@ export function TimeChart({ data, series, height = 220, yFmt, windowS }: {
     const ro = new ResizeObserver(() => el.current && plot.current?.setSize({ width: el.current.clientWidth, height }));
     ro.observe(el.current);
     return () => { ro.disconnect(); plot.current?.destroy(); plot.current = null; };
-    // re-create only when the series layout changes
+    // re-create when the series layout changes, or the theme flips (axis/grid colors are read
+    // once at creation time above, from live CSS variables, so a toggle needs a fresh instance)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series.map((s) => s.label + s.color).join(), height]);
+  }, [series.map((s) => s.label + s.color).join(), height, theme]);
 
   useEffect(() => {
     const u = plot.current;

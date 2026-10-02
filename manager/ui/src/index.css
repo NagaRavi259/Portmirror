@@ -7,8 +7,63 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Each variable is "R G B" (space-separated, no function wrapper) so Tailwind's
+   `rgb(var(--x) / <alpha-value>)` pattern in tailwind.config.js can still apply opacity
+   modifiers (bg-white/85 etc) on top of a themeable color - see that file for why. */
+:root {
+  --ink-950: 11 16 32;    --ink-900: 17 24 49;    --ink-700: 51 64 99;
+  --ink-500: 91 103 135;  --ink-400: 135 146 173; --ink-300: 180 188 207;
+  --line: 230 233 242;    --line-strong: 213 218 234;
+  --canvas: 246 247 251;  --surface: 255 255 255;
+
+  --accent-50: 238 240 255;  --accent-100: 224 228 255; --accent-400: 109 108 246;
+  --accent-500: 79 70 229;   --accent-600: 67 56 202;
+  --signal-50: 236 254 255;  --signal-400: 34 211 238;  --signal-500: 6 182 212; --signal-600: 8 145 178;
+
+  --rose-50: 255 241 242;   --rose-100: 255 228 230;  --rose-200: 254 205 211;  --rose-300: 253 164 175;
+  --rose-400: 251 113 133;  --rose-500: 244 63 94;     --rose-600: 225 29 72;    --rose-700: 190 18 60;
+  --rose-800: 159 18 57;    --rose-900: 136 19 55;
+
+  --emerald-50: 236 253 245;  --emerald-100: 209 250 229; --emerald-200: 167 243 208; --emerald-300: 110 231 183;
+  --emerald-400: 52 211 153;  --emerald-500: 16 185 129;  --emerald-600: 5 150 105;   --emerald-700: 4 120 87;
+  --emerald-800: 6 95 70;     --emerald-900: 6 78 59;
+
+  --amber-50: 255 251 235;  --amber-100: 254 243 199; --amber-200: 253 230 138; --amber-300: 252 211 77;
+  --amber-400: 251 191 36;  --amber-500: 245 158 11;  --amber-600: 217 119 6;   --amber-700: 180 83 9;
+  --amber-800: 146 64 14;   --amber-900: 120 53 15;
+}
+
+/* Dark values aren't light values "inverted" mechanically - status-color text in particular
+   (rose-700, emerald-700, amber-700: the shade this app uses for readable text on a tinted chip)
+   is deliberately promoted to a brighter shade than its light-mode hex, since the dark-mode-correct
+   version of "dark, readable text" is "light, readable text." Verified visually, not just by formula -
+   see docs/feature-checklist.md for what was actually checked. */
+:root[data-theme="dark"] {
+  --ink-950: 241 243 250;  --ink-900: 227 230 240;  --ink-700: 169 177 204;
+  --ink-500: 126 134 163;  --ink-400: 98 106 137;   --ink-300: 51 58 87;
+  --line: 33 39 65;        --line-strong: 44 52 84;
+  --canvas: 10 14 26;      --surface: 18 23 41;
+
+  --accent-50: 26 26 58;    --accent-100: 35 35 83;   --accent-400: 143 142 248;
+  --accent-500: 111 104 234; --accent-600: 92 84 217;
+  --signal-50: 8 34 48;      --signal-400: 103 232 249; --signal-500: 34 211 238; --signal-600: 8 145 178;
+
+  --rose-50: 42 18 22;     --rose-100: 58 24 29;    --rose-200: 92 35 44;    --rose-300: 243 170 181;
+  --rose-400: 251 113 133; --rose-500: 252 90 118;  --rose-600: 244 63 94;   --rose-700: 253 164 175;
+  --rose-800: 254 205 211; --rose-900: 255 228 230;
+
+  --emerald-50: 15 36 32;    --emerald-100: 18 58 46;   --emerald-200: 28 90 66;    --emerald-300: 110 231 183;
+  --emerald-400: 52 211 153; --emerald-500: 52 211 153; --emerald-600: 16 185 129;  --emerald-700: 110 231 183;
+  --emerald-800: 167 243 208; --emerald-900: 209 250 229;
+
+  --amber-50: 42 31 10;    --amber-100: 61 45 15;   --amber-200: 92 69 24;   --amber-300: 252 211 77;
+  --amber-400: 251 191 36; --amber-500: 251 191 36; --amber-600: 245 158 11; --amber-700: 252 211 77;
+  --amber-800: 253 230 138; --amber-900: 254 243 199;
+}
+
 @layer base {
   html { color-scheme: light; }
+  html[data-theme="dark"] { color-scheme: dark; }
   body {
     @apply bg-canvas text-ink-900 antialiased;
     font-feature-settings: "cv11", "ss01", "ss03";
@@ -16,6 +71,14 @@
       radial-gradient(circle at 1px 1px, rgba(79, 70, 229, 0.07) 1px, transparent 0),
       radial-gradient(1200px 500px at 85% -10%, rgba(6, 182, 212, 0.08), transparent 60%),
       radial-gradient(900px 480px at -10% -20%, rgba(79, 70, 229, 0.09), transparent 60%);
+    background-size: 22px 22px, auto, auto;
+    background-attachment: fixed;
+  }
+  html[data-theme="dark"] body {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(143, 142, 248, 0.08) 1px, transparent 0),
+      radial-gradient(1200px 500px at 85% -10%, rgba(103, 232, 249, 0.06), transparent 60%),
+      radial-gradient(900px 480px at -10% -20%, rgba(111, 104, 234, 0.10), transparent 60%);
     background-size: 22px 22px, auto, auto;
     background-attachment: fixed;
   }
@@ -29,11 +92,11 @@
   .label { @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-400; }
   .btn { @apply inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-sm font-medium transition
          disabled:opacity-50 disabled:cursor-not-allowed select-none; }
-  .btn-primary { @apply btn text-white shadow-sm bg-gradient-to-r from-accent-500 to-signal-500
+  .btn-primary { @apply btn text-oncolor shadow-sm bg-gradient-to-r from-accent-500 to-signal-500
          hover:brightness-110 active:brightness-95; }
   .btn-ghost { @apply btn text-ink-700 hover:bg-ink-950/[.04] active:bg-ink-950/[.07]; }
   .btn-outline { @apply btn text-ink-700 bg-white border border-line-strong hover:border-ink-300 hover:bg-canvas; }
-  .btn-danger { @apply btn text-white bg-rose-600 hover:bg-rose-500 shadow-sm; }
+  .btn-danger { @apply btn text-oncolor bg-rose-600 hover:bg-rose-500 shadow-sm; }
   .input { @apply h-10 w-full rounded-lg border border-line-strong bg-white px-3 text-sm text-ink-900
          placeholder:text-ink-300 transition focus:border-accent-400 focus:shadow-glow outline-none; }
   .input-invalid { @apply border-rose-400 focus:border-rose-500; box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.10); }
@@ -47,4 +110,4 @@
 .u-select { background: rgba(79, 70, 229, 0.08); }
 
 .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
-.scroll-thin::-webkit-scrollbar-thumb { background: #d5daea; border-radius: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: rgb(var(--line-strong)); border-radius: 8px; }

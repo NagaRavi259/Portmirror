@@ -361,6 +361,32 @@ def main():
             return detail
         check("UI-NOTIFICATIONS", "Notification bell opens, shows a well-formed state either way", notifications)
 
+        def dark_mode():
+            page.goto(URL + "/#/")
+            html = page.locator("html")
+            expect(html).not_to_have_attribute("data-theme", "dark")
+            page.get_by_label("Switch to dark theme").click()
+            expect(html).to_have_attribute("data-theme", "dark")
+            page.screenshot(path=f"{SHOTS}/09e-dark-dashboard.png", full_page=True)
+
+            # persists across a reload, not just in memory
+            page.reload()
+            expect(html).to_have_attribute("data-theme", "dark", timeout=10000)
+
+            # the Settings tri-state control agrees with the header toggle, and can go back to "system"
+            page.goto(URL + "/#/settings")
+            expect(page.get_by_role("button", name="Dark", exact=True)).to_be_visible(timeout=10000)
+            page.get_by_role("button", name="System", exact=True).click()
+            page.wait_for_timeout(300)
+            stored = page.evaluate("localStorage.getItem('pm-theme')")
+            assert stored is None, f"'System' must clear the stored preference, got {stored!r}"
+            # this test's own browser context has no OS dark-mode override, so "system" resolves to
+            # light - confirmed by the toggle button itself now offering to switch TO dark again
+            expect(page.get_by_label("Switch to dark theme")).to_be_visible(timeout=5000)
+            expect(html).not_to_have_attribute("data-theme", "dark")
+            return "toggles, persists across reload, and 'System' clears the stored override"
+        check("UI-DARK-MODE", "Dark mode toggles, persists, and Settings' tri-state control agrees", dark_mode)
+
         # ---- mobile ---------------------------------------------------------------------
         def mobile():
             m = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,

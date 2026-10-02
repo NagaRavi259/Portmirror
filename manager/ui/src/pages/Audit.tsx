@@ -40,7 +40,7 @@ export function Audit({ deviceNames }: { deviceNames: Record<string, string> }) 
         {groups.map((g) => (
           <button key={g} onClick={() => setFilter(g)}
             className={cx("h-8 rounded-full px-3 text-xs font-semibold capitalize transition",
-              filter === g ? "bg-ink-950 text-white" : "bg-white text-ink-500 ring-1 ring-line hover:text-ink-900")}>{g}</button>
+              filter === g ? "bg-accent-500 text-oncolor" : "bg-white text-ink-500 ring-1 ring-line hover:text-ink-900")}>{g}</button>
         ))}
       </div>
       <Card className="overflow-hidden">

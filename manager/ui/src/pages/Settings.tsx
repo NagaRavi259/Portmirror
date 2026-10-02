@@ -1,9 +1,10 @@
-import { Check, Copy, Download, KeyRound, Server, Trash2, Upload } from "lucide-react";
+import { Check, Copy, Download, KeyRound, Palette, Server, Trash2, Upload } from "lucide-react";
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useState } from "react";
 import { useToast } from "../components/Toasts";
 import { Card, Field, Modal, Segmented, Spinner } from "../components/ui";
 import { Api, ForwardBody, SystemInfo, TokenRow } from "../lib/api";
 import { ago, bytes, datetime } from "../lib/format";
+import { setTheme, storedTheme, THEME_CHANGE_EVENT } from "../lib/theme";
 
 function Section({ icon, title, text, children }: { icon: ReactNode; title: string; text: string; children: ReactNode }) {
   return (
@@ -32,9 +33,17 @@ export function Settings({ system, mustChange, onPasswordChanged, onImported }: 
   const [copied, setCopied] = useState(false);
   const [importData, setImportData] = useState<ForwardBody[] | null>(null);
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
+  const [appearance, setAppearance] = useState<"light" | "dark" | "system">(() => storedTheme() ?? "system");
 
   const loadTokens = () => Api.tokens().then(setTokens).catch(() => {});
   useEffect(() => { loadTokens(); }, []);
+
+  // stays in sync if the theme was last changed from the header toggle, not this page
+  useEffect(() => {
+    const onThemeChange = () => setAppearance(storedTheme() ?? "system");
+    window.addEventListener(THEME_CHANGE_EVENT, onThemeChange);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
+  }, []);
 
   const changePw = async (e: FormEvent) => {
     e.preventDefault();
@@ -149,6 +158,11 @@ export function Settings({ system, mustChange, onPasswordChanged, onImported }: 
             <input type="file" accept="application/json,.json" className="hidden" onChange={pickImport} />
           </label>
         </div>
+      </Section>
+
+      <Section icon={<Palette size={18} />} title="Appearance" text="Light, dark, or follow this device's own setting.">
+        <Segmented value={appearance} onChange={(v: "light" | "dark" | "system") => { setAppearance(v); setTheme(v === "system" ? null : v); }}
+          options={[{ value: "light", label: "Light" }, { value: "dark", label: "Dark" }, { value: "system", label: "System" }]} />
       </Section>
 
       <Section icon={<Server size={18} />} title="Gateway" text="Read-only view of how this gateway is wired.">

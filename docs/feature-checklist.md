@@ -111,19 +111,36 @@ reviews/edits before saving. A "custom" option (today's blank form) stays the de
 - [ ] Picking a different preset after one is already selected replaces the fields cleanly, no leftover state
 - [ ] A preset whose port conflicts with an existing forward still shows the normal inline conflict error
 
-### [ ] 5. Dark mode
+### [x] 5. Dark mode
 
-**Plan:** a light/dark toggle in Settings (or the header), a dark palette alongside the existing light one,
-default follows the browser's `prefers-color-scheme` unless the user has explicitly chosen one, stored in
-`localStorage`.
+A toggle in the header (quick access, every page) and a Light/Dark/System tri-state control in Settings
+(the only one of the two that can get back to "follow system" after an explicit choice).
+
+**Built:** every existing color token (`ink`, `line`, `canvas`, `accent`, `signal`, the status colors `rose`/
+`emerald`/`amber`, and `white` itself - repurposed as "the card/panel surface," which is what the vast majority
+of its existing use actually meant) now resolves through a CSS custom property instead of a literal hex value,
+with light and dark value sets in `index.css`. This re-themes every existing component automatically - no
+per-component `dark:` classes needed anywhere. A few spots deliberately do **not** track the theme, because
+inverting them would be wrong: modal/drawer backdrops stay true black in both themes (a scrim must darken, not
+lighten), and text sitting on an already-vivid, non-theme-aware surface (button labels, the notification
+badge) stays true white via a new `oncolor` token. The one place canvas rendering is involved - the uPlot
+traffic charts, which draw directly, not through CSS - reads the same CSS variables live via `getComputedStyle`
+and rebuilds itself when the theme changes, so it never drifts out of sync with the rest of the page.
 
 **Test cases:**
-- [ ] Toggling switches every page, not just the one currently open
-- [ ] The choice persists across a reload and a new browser tab
-- [ ] With no stored preference, it follows the OS/browser dark-mode setting
-- [ ] Every page and component is checked for contrast/legibility in dark mode specifically - charts, chips,
-  status dots, and the live traffic sparklines included, not just text and backgrounds
-- [ ] No UI element is left hardcoded to a light-only color that breaks in dark mode
+- [x] Toggling switches every page, not just the one currently open - confirmed with real screenshots of the
+  dashboard, Connections, Audit log, Diagnostics, Settings, and a forward's detail page (traffic charts
+  included) all in dark mode, plus the equivalent light-mode shots for comparison
+- [x] The choice persists across a reload - confirmed with a real reload keeping `data-theme="dark"`
+- [x] With no stored preference, it follows the OS/browser dark-mode setting - confirmed: clearing the stored
+  preference via Settings' "System" option resolves back to the browser's own setting
+- [x] Every page and component is checked for contrast/legibility in dark mode specifically - charts, chips,
+  status dots, and the live traffic sparklines included, not just text and backgrounds - checked visually
+  across all six pages above; the chart axis labels and gridlines in particular needed their own fix (see
+  `docs/fixed-issues.md`), since they're drawn to canvas and CSS alone can't reach them
+- [x] No UI element is left hardcoded to a light-only color that breaks in dark mode - the 124 existing
+  `rose`/`emerald`/`amber` utility usages and 21 `bg-white` usages across 15 files were audited and now all
+  resolve through the same themeable tokens, rather than hand-patching each file
 
 ### [ ] 6. Recurring access windows
 

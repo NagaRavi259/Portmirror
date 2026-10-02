@@ -111,7 +111,8 @@ export function Modal({ title, onClose, children, footer, icon }: {
   useEscape(onClose);
   return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
-      <div className="absolute inset-0 bg-ink-950/25 backdrop-blur-[2px]" onClick={onClose} />
+      {/* always-black scrim, deliberately not the theme-flipping ink-950 - a backdrop must dim in both themes */}
+      <div className="absolute inset-0 bg-black/25 backdrop-blur-[2px]" onClick={onClose} />
       <div role="dialog" aria-modal="true" aria-label={title} className="relative w-full max-w-md rounded-2xl border border-line bg-white shadow-lift animate-fadeup">
         <div className="flex items-start gap-3 p-5 pb-3">
           {icon}
@@ -132,7 +133,7 @@ export function Drawer({ title, subtitle, onClose, children, footer }: {
   useEscape(onClose);
   return createPortal(
     <div className="fixed inset-0 z-40">
-      <div className="absolute inset-0 bg-ink-950/20 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" onClick={onClose} />
       <aside role="dialog" aria-modal="true" aria-label={title}
         className="absolute right-0 top-0 flex h-full w-full max-w-[520px] flex-col border-l border-line bg-white shadow-lift animate-slidein">
         <div className="flex items-start gap-3 border-b border-line px-6 py-5">

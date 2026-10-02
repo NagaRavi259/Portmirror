@@ -4,6 +4,7 @@ import { GlobalStats, SystemInfo } from "../lib/api";
 import { LinkState } from "../lib/live";
 import { Route } from "../lib/router";
 import { NotificationBell } from "./NotificationBell";
+import { ThemeToggle } from "./ThemeToggle";
 import { StatusDot, cx } from "./ui";
 
 function Logo() {
@@ -93,6 +94,7 @@ export function Shell({ route, link, global, system, user, onLogout, children }:
               <StatusDot state={link === "live" ? "up" : link === "connecting" ? "warn" : "down"} pulse={link === "live"} />
               {link === "live" ? "Live" : link === "connecting" ? "Connecting" : "Reconnecting"}
             </span>
+            <ThemeToggle />
             <NotificationBell />
           </div>
         </header>
