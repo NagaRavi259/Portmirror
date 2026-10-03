@@ -317,6 +317,11 @@ class Store:
             "FROM rollups WHERE fid=? AND ts>=? GROUP BY t ORDER BY t", (bucket, bucket, fid, since))
         return [dict(r) for r in rows]
 
+    def usage_since(self, fid: int, since: int) -> int:
+        r = self._q("SELECT COALESCE(SUM(bytes_in + bytes_out), 0) AS total FROM rollups WHERE fid=? AND ts>=?",
+                    (fid, since))
+        return int(r[0]["total"])
+
     def purge_rollups(self, older_than: int):
         self._x("DELETE FROM rollups WHERE ts < ?", (older_than,))
 

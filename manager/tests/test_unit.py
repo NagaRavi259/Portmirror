@@ -796,3 +796,53 @@ def test_history_csv_uses_iso_times():
     from app import export
     text = export.history_csv([{"t": 0, "new_per_s": 1.5, "in_bps": 800, "out_bps": 0, "live": 2}], 300)
     assert text.splitlines()[1].startswith("1970-01-01T00:00:00+00:00,300,")
+
+
+# ---- data quotas --------------------------------------------------------------------
+def test_quota_period_starts():
+    from app import quota
+    now = datetime(2026, 10, 7, 15, 30)   # a Wednesday
+    assert quota.period_start(now, "day") == datetime(2026, 10, 7, 0, 0)
+    assert quota.period_start(now, "week") == datetime(2026, 10, 5, 0, 0)   # Monday
+    assert quota.period_start(now, "month") == datetime(2026, 10, 1, 0, 0)
+    monday = datetime(2026, 10, 5, 0, 30)
+    assert quota.period_start(monday, "week") == datetime(2026, 10, 5, 0, 0)
+
+
+def test_quota_action_only_when_it_changes_something():
+    from app import quota
+    assert quota.quota_action(usage=100, limit=100, enabled=True, disabled_by_quota=False) == "disable"
+    assert quota.quota_action(usage=99, limit=100, enabled=True, disabled_by_quota=False) is None
+    assert quota.quota_action(usage=500, limit=100, enabled=False, disabled_by_quota=True) is None     # already off
+    # back under the limit (period rolled over / quota raised): re-enable only what the quota switched off
+    assert quota.quota_action(usage=10, limit=100, enabled=False, disabled_by_quota=True) == "enable"
+    assert quota.quota_action(usage=10, limit=100, enabled=False, disabled_by_quota=False) is None, \
+        "a forward the user disabled by hand must not be switched back on by a quota reset"
+
+
+def test_quota_model_validation():
+    from app.models import Quota
+    assert Quota(bytes=1, period="day").period == "day"
+    with pytest.raises(ValidationError):
+        Quota(bytes=0, period="day")
+    with pytest.raises(ValidationError):
+        Quota(bytes=10, period="year")
+
+
+def test_store_usage_sums_bytes_in_and_out_since_a_cutoff(store):
+    f = store.create(ForwardIn(name="q", listen_port=7600, target_ip="10.0.0.12", target_port=80))
+    store.write_rollups([(1000, f.id, 1, 100, 200, 1, 1, 0), (2000, f.id, 1, 300, 400, 1, 1, 0),
+                         (3000, f.id, 1, 9999, 9999, 1, 1, 0)])
+    assert store.usage_since(f.id, 1500) == (300 + 400) + (9999 + 9999)
+    assert store.usage_since(f.id, 0) == 100 + 200 + 300 + 400 + 9999 + 9999
+    assert store.usage_since(f.id, 99999) == 0
+
+
+def test_collector_reports_current_minute_bytes_without_creating_state(store):
+    from app.collector import Collector
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+    assert c.current_minute_bytes(9) == 0 and 9 not in c.acc, "reading must not create an accumulator"
+    c.acc[9][1] = 300
+    c.acc[9][2] = 450
+    assert c.current_minute_bytes(9) == 750
+

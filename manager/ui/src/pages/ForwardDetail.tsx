@@ -6,7 +6,7 @@ import { ClientLabel } from "../components/ClientLabel";
 import { Card, Empty, Modal, PortLink, ProtoBadge, Segmented, Spinner, StatusDot, Switch, cx } from "../components/ui";
 import { Api, AuditEntry, Conn, Forward, History, Snapshot, SystemInfo } from "../lib/api";
 import { ago, bps, bytes, count, datetime, duration, ports, rate, until } from "../lib/format";
-import { forwardState } from "./Dashboard";
+import { forwardState, quotaReached } from "./Dashboard";
 import { LIVE_WINDOW_S, RANGES, Range } from "../lib/ranges";
 
 function Stat({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: string }) {
@@ -204,6 +204,12 @@ export function ForwardDetail({ forward, snap, system, deviceNames, onDeviceName
         {forward.bandwidth_limit_kbps != null && (
           <Stat label="Shaped" value={bps(forward.bandwidth_limit_kbps * 1000)} sub="cap, each direction" tone="text-amber-600" />
         )}
+        {forward.quota && (() => {
+          const used = forward.quota_used ?? 0;
+          const pct = Math.min(100, Math.round((used / forward.quota.bytes) * 100));
+          return <Stat label="Data quota" value={`${pct}%`} tone={quotaReached(forward) ? "text-violet-600" : undefined}
+            sub={`${bytes(used)} of ${bytes(forward.quota.bytes)} per ${forward.quota.period}${quotaReached(forward) ? " - turned off" : ""}`} />;
+        })()}
       </Card>
 
       <div className="flex items-center justify-between">

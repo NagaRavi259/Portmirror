@@ -66,7 +66,13 @@ function Kpi({ icon, label, value, sub, accent, children, index = 0 }: {
   );
 }
 
-export function forwardState(f: Forward): "up" | "down" | "off" | "unknown" {
+/** A forward switched off because it hit its data quota reads as its own state, not plain "off". */
+export function quotaReached(f: Forward): boolean {
+  return !f.enabled && !!f.quota && (f.quota_used ?? 0) >= f.quota.bytes;
+}
+
+export function forwardState(f: Forward): "up" | "down" | "off" | "unknown" | "quota" {
+  if (quotaReached(f)) return "quota";
   if (!f.enabled || f.expired) return "off";
   return f.health?.state ?? "unknown";
 }

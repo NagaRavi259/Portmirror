@@ -27,6 +27,7 @@ export interface ForwardStats {
 }
 
 export interface AccessWindow { days: number[]; start: string; end: string }
+export interface Quota { bytes: number; period: "day" | "week" | "month" }
 
 export interface ForwardBody {
   name: string;
@@ -40,6 +41,7 @@ export interface ForwardBody {
   max_conns: number | null;
   bandwidth_limit_kbps: number | null;
   access_window: AccessWindow | null;
+  quota: Quota | null;
   expires_at: string | null;
   enabled: boolean;
   description: string;
@@ -53,6 +55,7 @@ export interface Forward extends ForwardBody {
   expired: boolean;
   stats: ForwardStats | null;
   health: Health | null;
+  quota_used: number | null;
   spark?: [number, number, number][];
 }
 

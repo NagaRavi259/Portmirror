@@ -11,9 +11,9 @@ export function Card({ className, children }: { className?: string; children: Re
   return <div className={cx("card", className)}>{children}</div>;
 }
 
-export function StatusDot({ state, pulse }: { state: "up" | "down" | "off" | "unknown" | "warn"; pulse?: boolean }) {
-  const color = { up: "bg-emerald-500", down: "bg-rose-500", off: "bg-ink-300", unknown: "bg-ink-300", warn: "bg-amber-500" }[state];
-  const ring = { up: "bg-emerald-400/40", down: "bg-rose-400/40", off: "", unknown: "", warn: "bg-amber-400/40" }[state];
+export function StatusDot({ state, pulse }: { state: "up" | "down" | "off" | "unknown" | "warn" | "quota"; pulse?: boolean }) {
+  const color = { up: "bg-emerald-500", down: "bg-rose-500", off: "bg-ink-300", unknown: "bg-ink-300", warn: "bg-amber-500", quota: "bg-violet-500" }[state];
+  const ring = { up: "bg-emerald-400/40", down: "bg-rose-400/40", off: "", unknown: "", warn: "bg-amber-400/40", quota: "bg-violet-400/40" }[state];
   return (
     <span className="relative inline-flex h-2.5 w-2.5 shrink-0">
       {pulse && ring && <span className={cx("absolute inset-0 rounded-full animate-pulse2", ring)} style={{ transform: "scale(1.9)" }} />}

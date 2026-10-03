@@ -385,6 +385,24 @@ def main():
             return "schedule switch reveals day toggles and start/end times"
         check("UI-SCHEDULE", "Recurring access window form controls work", schedule_form)
 
+        def quota_form():
+            page.goto(URL + "/#/")
+            page.get_by_role("button", name="New forward").first.click()
+            drawer = page.get_by_role("dialog", name="New forward")
+            expect(drawer).to_be_visible()
+            drawer.get_by_text("Limits & schedule").click()
+            drawer.get_by_label("Quota amount in GiB").fill("2.5")
+            try:
+                drawer.get_by_role("button", name="week", exact=True).click()
+                drawer.get_by_label("Quota amount in GiB").fill("0")
+                drawer.get_by_label("Quota amount in GiB").press("Tab")   # blur, as a person would
+                expect(drawer.get_by_text("Enter a positive amount, in GiB")).to_be_visible()
+            finally:
+                page.keyboard.press("Escape")   # never leave the drawer open for the tests after this one
+            expect(drawer).to_be_hidden()
+            return "quota amount and period set; zero is rejected inline"
+        check("UI-QUOTA", "Data quota form accepts an amount and period, rejects nonsense", quota_form)
+
         def settings():
             page.goto(URL + "/#/settings")
             expect(page.get_by_text("still using the generated initial password")).to_be_visible()

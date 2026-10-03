@@ -30,6 +30,7 @@ auth = Auth(store, notifier)
 manager = Manager(store, notifier)
 prober = Prober(manager.forwards, notifier)
 collector = Collector(store, manager.forwards, prober)
+manager.live_bytes = collector.current_minute_bytes
 
 
 def _bump():
@@ -127,6 +128,7 @@ def _view(f, snap=None):
     d["expired"] = f.expired()
     d["stats"] = (snap or collector.snapshot)["forwards"].get(f.id)
     d["health"] = prober.status.get(f.id)
+    d["quota_used"] = manager.quota_usage.get(f.id)
     return d
 
 

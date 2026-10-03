@@ -164,31 +164,51 @@ schedule" switch with day toggles and start/end times. Detail page shows it as a
 - [ ] A forward with both a schedule and `expires_at` - not yet tested together
 - [x] Existing forwards with no schedule are unaffected - a forward with `access_window=None` is skipped entirely by the loop
 
-### [ ] 7. Per-forward bandwidth quota (bytes over a period) — decision made, not built
+### [ ] 7. Per-forward bandwidth quota (bytes over a period) — built, verification in progress
 
-**Decided (2026-10-03):** when a forward reaches its quota it is **disabled**, not deleted. The monitoring page shows it in a distinct colour as "quota reached", and a notification asks whether to increase the quota or delete the forward. **Still open:** how the quota combines with the realtime kbit/s cap on the same forward - proposed default: both apply independently, the cap limits speed and the quota limits total data.
+Total data (bytes in + out) allowed per day, week or month. Distinct from the realtime kbit/s cap, which
+limits speed. The two are independent and both apply to the same forward.
 
-Distinct from the realtime kbit/s throughput cap already shipped (`bandwidth_limit_kbps` - done, see
-`progress.md`): a cumulative cap, e.g. "500 MB/day," after which the forward throttles hard or disables itself
-until the period resets. Relevant when data usage itself matters (e.g. relaying over a metered connection),
-not just instantaneous speed.
+**Decided (2026-10-03):**
+- Reaching the quota **disables** the forward - it is never deleted.
+- The monitoring page shows it in a distinct colour (violet) as "quota reached".
+- A notification says the forward reached its quota and offers **Increase quota** or **Delete forward**.
+  Both open the forward's page, where its own Edit and Delete (with confirmation) live.
+- The realtime cap and the quota combine as: the cap limits speed, the quota limits total data. A forward
+  switched off by its quota loses its shaping class, since it isn't carrying traffic.
 
-**Plan:** a `quota_bytes` + `quota_period` (daily/weekly/monthly) field on `ForwardIn`. Usage is summed from
-the traffic history rollups already being written every minute for each forward - no new counting mechanism
-needed, just a periodic check (housekeeping loop again) comparing the period's running total against the
-quota, and disabling the forward (or clamping its `bandwidth_limit_kbps` down hard, if an already-shaped
-forward hits its quota - needs a decision on which) when exceeded. Resets automatically at the next period
-boundary.
+**Built:**
+- `app/quota.py`: period starts (day from local midnight, week from Monday, month from the 1st) and the pure
+  decision (`quota_action`): disable when over and on; re-enable only a forward the quota itself switched off,
+  and only once back under the limit.
+- `Quota` on `ForwardIn` (bytes, period); usage = the per-minute rollups for the current period plus the
+  in-memory current minute (`Collector.current_minute_bytes`), so enforcement reacts within a few seconds
+  instead of waiting for the minute to flush.
+- Housekeeping loop (every 5 s) enforces it and writes `forward.quota_reached` / `forward.quota_reset` audit
+  entries plus the notification. An expired forward is left to expiry.
+- A person taking control (a manual toggle, or an edit that disables the forward) clears the quota's claim, so
+  a quota reset never overrides a manual choice.
+- Form: "Data quota" amount (GiB) and period, inline validation. Detail page: a "Data quota" stat with usage.
+  Notification: the two actions above.
 
 **Test cases:**
-- [ ] Usage sums bytes in **and** out correctly over the period, matching the dashboard's own totals for the
-  same window
-- [ ] The forward is correctly disabled (or throttled, per whichever behavior is chosen) the moment it crosses
-  the quota, not just eventually
-- [ ] The quota resets cleanly at the period boundary and the forward can run again
-- [ ] A quota combined with an existing `bandwidth_limit_kbps` on the same forward behaves as decided, not
-  ambiguously
-- [ ] The UI shows current usage against the quota (a progress bar or similar), updating live
+- [x] Usage sums bytes in and out for the period - unit-tested (`test_store_usage_sums_bytes_in_and_out_since_a_cutoff`)
+- [x] Period starts for day, week (Monday) and month - unit-tested (`test_quota_period_starts`)
+- [x] The forward is disabled the moment it crosses the quota - verified live: 3,000-byte quota, 10,103 bytes
+  used, forward switched off, audit entry and notification written, shaping class removed, forward not deleted
+- [x] Raising the quota turns it back on - verified live (`forward.quota_reset`)
+- [x] A manual disable holds even while under the quota - verified live: disabled, still disabled 16 s later
+- [x] Quota and realtime cap on the same forward - both stored and applied; the disabled forward lost its class
+- [ ] The quota resets at the period boundary and the forward runs again - decision logic unit-tested
+  (`test_quota_action_only_when_it_changes_something`). Verified live without waiting for midnight:
+  rollups dated yesterday (5 MB) are excluded from today's usage; clearing today's rows drops usage to 0 and
+  `forward.quota_reset` re-enables the forward. Not yet observed across a real day/week/month rollover.
+- [x] UI shows usage against the quota - verified in a real browser: detail page "100% - 9.87 KB of 1000 B per
+  day - turned off"; the violet status colour and the bell's two actions render
+- [x] Form accepts an amount and period and rejects nonsense inline - e2e `UI-QUOTA`
+- [x] Usage reacts near-live - enforcement verified live: a 3,000-byte quota switched the forward off about 3 s
+  after the traffic crossed it (in-memory current minute); the housekeeping cadence is 5 s. The page's display
+  refresh follows the UI poll interval.
 
 ### [ ] 8. CSV export for history and audit — built, some test cases still open
 

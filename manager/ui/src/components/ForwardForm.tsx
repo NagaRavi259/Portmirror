@@ -24,6 +24,7 @@ interface State {
   name: string; protocol: Protocol; listen: string; listenEnd: string; useRange: boolean;
   targetIp: string; targetPort: string; sources: string[]; rateLimit: string; maxConns: string; bandwidthLimit: string;
   schedOn: boolean; schedDays: number[]; schedStart: string; schedEnd: string;
+  quotaGb: string; quotaPeriod: "day" | "week" | "month";
   expiry: Expiry; expiresCustom: string; enabled: boolean; description: string;
 }
 
@@ -41,6 +42,7 @@ function initial(f?: Forward, lanNet = "192.168.88.0/24"): State {
     bandwidthLimit: f?.bandwidth_limit_kbps ? String(f.bandwidth_limit_kbps) : "",
     schedOn: !!f?.access_window, schedDays: f?.access_window?.days ?? [0, 1, 2, 3, 4],
     schedStart: f?.access_window?.start ?? "09:00", schedEnd: f?.access_window?.end ?? "22:00",
+    quotaGb: f?.quota ? String(+(f.quota.bytes / 1024 ** 3).toFixed(3)) : "", quotaPeriod: f?.quota?.period ?? "month",
     expiry: f?.expires_at ? "custom" : "never",
     expiresCustom: f?.expires_at ? toLocal(f.expires_at) : "", enabled: f?.enabled ?? true, description: f?.description ?? "",
   };
@@ -55,7 +57,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
   const [serverErr, setServerErr] = useState<{ msg: string; fields: Record<string, string> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [srcDraft, setSrcDraft] = useState("");
-  const [showAdv, setShowAdv] = useState(!!(forward?.rate_limit || forward?.max_conns || forward?.bandwidth_limit_kbps || forward?.access_window || forward?.expires_at));
+  const [showAdv, setShowAdv] = useState(!!(forward?.rate_limit || forward?.max_conns || forward?.bandwidth_limit_kbps || forward?.access_window || forward?.quota || forward?.expires_at));
   const [killOld, setKillOld] = useState(false);
   const set = <K extends keyof State>(k: K, v: State[K]) => setS((x) => ({ ...x, [k]: v }));
 
@@ -90,6 +92,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
     if (s.bandwidthLimit && !(Number(s.bandwidthLimit) >= 1)) e.bandwidthLimit = "≥ 1";
     if (s.expiry === "custom" && !s.expiresCustom) e.expiry = "Pick a date and time";
     if (s.schedOn && !s.schedDays.length) e.schedule = "Pick at least one day";
+    if (s.quotaGb && !(Number(s.quotaGb) > 0)) e.quota = "Enter a positive amount, in GiB";
     if (s.schedOn && s.schedStart === s.schedEnd) e.schedule = "Start and end can't be the same time";
     if (!e.listen && !e.listenEnd && s.enabled) {
       const protos = s.protocol === "both" ? ["tcp", "udp"] : [s.protocol];
@@ -136,6 +139,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
       max_conns: s.maxConns ? Number(s.maxConns) : null,
       bandwidth_limit_kbps: s.bandwidthLimit ? Number(s.bandwidthLimit) : null,
       access_window: s.schedOn ? { days: s.schedDays, start: s.schedStart, end: s.schedEnd } : null,
+      quota: s.quotaGb ? { bytes: Math.round(Number(s.quotaGb) * 1024 ** 3), period: s.quotaPeriod } : null,
       expires_at: expiresAt(), enabled: s.enabled,
       description: s.description.trim(),
     };
@@ -297,6 +301,17 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
               <Field label="Bandwidth limit" hint="kbit/s, each direction" error={fieldErr("bandwidthLimit", "bandwidth_limit_kbps")}>
                 <input className="input num" inputMode="numeric" placeholder="unlimited" value={s.bandwidthLimit}
                   onChange={(e) => set("bandwidthLimit", e.target.value.replace(/\D/g, ""))} />
+              </Field>
+              <Field label="Data quota" hint="Total in + out per period; reaching it turns the forward off" error={fieldErr("quota", "quota")}>
+                <div className="flex items-center gap-2">
+                  <input className={cx("input num h-9 w-32", fieldErr("quota", "quota") && "input-invalid")} inputMode="decimal"
+                    placeholder="no limit" aria-label="Quota amount in GiB" value={s.quotaGb}
+                    onChange={(e) => set("quotaGb", e.target.value.replace(/[^0-9.]/g, ""))}
+                    onBlur={() => setTouched((t) => ({ ...t, quota: true }))} />
+                  <span className="text-ink-400">GiB per</span>
+                  <Segmented value={s.quotaPeriod} onChange={(v) => set("quotaPeriod", v)}
+                    options={[{ value: "day", label: "day" }, { value: "week", label: "week" }, { value: "month", label: "month" }]} />
+                </div>
               </Field>
               <Field label="Only on a schedule" hint="Off outside these hours; a manual change holds until the next boundary"
                 error={fieldErr("schedule", "access_window")}>

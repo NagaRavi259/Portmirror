@@ -230,6 +230,12 @@ class Collector:
                 "mem_limit": int(mmax) if mmax.isdigit() else _host_mem_total(),
                 "load": os.getloadavg()[0]}
 
+    def current_minute_bytes(self, fid: int) -> int:
+        """Bytes (in + out) seen so far this minute, not yet written to the database. Read with .get so
+        checking a forward never creates an accumulator for it."""
+        a = self.acc.get(fid)
+        return a[1] + a[2] if a else 0
+
     def _rollup(self, now: float):
         minute = int(now // 60)
         if minute == self.minute:

@@ -2,6 +2,7 @@ import { AlertTriangle, Bell, Check, Info, VolumeX, X, XCircle } from "lucide-re
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Api, Notification } from "../lib/api";
 import { ago } from "../lib/format";
+import { go } from "../lib/router";
 import { useToast } from "./Toasts";
 import { cx, Empty, Spinner } from "./ui";
 
@@ -98,6 +99,17 @@ export function NotificationBell() {
                       </div>
                       {active && (
                         <div className="mt-2 flex flex-wrap gap-1.5 pl-[34px]">
+                          {n.type === "quota_reached" && typeof n.context?.forward_id === "number" && (<>
+                            {/* both open the forward itself, where its own Edit and Delete (with confirmation) live */}
+                            <button className="chip bg-canvas text-ink-600 ring-1 ring-line hover:text-ink-900"
+                              onClick={() => act(async () => { await Api.setNotificationState(n.id, "actioned"); go(`forwards/${n.context!.forward_id}`); })}>
+                              Increase quota
+                            </button>
+                            <button className="chip bg-canvas text-ink-600 ring-1 ring-line hover:text-ink-900"
+                              onClick={() => act(async () => { await Api.setNotificationState(n.id, "actioned"); go(`forwards/${n.context!.forward_id}`); })}>
+                              Delete forward
+                            </button>
+                          </>)}
                           <button className="chip bg-canvas text-ink-600 ring-1 ring-line hover:text-ink-900"
                             onClick={() => act(() => Api.setNotificationState(n.id, "actioned"))}>
                             <Check size={11} /> Took action

@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import config, engine
+from . import config, engine, quota
 from .models import Forward, ForwardIn
 from .store import Store
 
@@ -24,6 +24,11 @@ class Manager:
         # last window state applied per forward - the schedule only acts when a boundary is crossed,
         # so a manual change made inside a window holds until the next boundary, not every 5 s
         self._window_seen: dict[int, bool] = {}
+        # data-quota state: current usage per forward, and which forwards the quota itself switched off
+        self.quota_usage: dict[int, int] = {}
+        # bytes in the current minute, not yet in the database - wired to the collector by main
+        self.live_bytes = lambda fid: 0
+        self._quota_disabled: set[int] = set()
 
     def forwards(self) -> list[Forward]:
         return self._cache
@@ -60,6 +65,8 @@ class Manager:
             old = self.store.forward(fid)
             if old is None:
                 raise KeyError(fid)
+            if not fin.enabled:
+                self._quota_disabled.discard(fid)
             f = self.store.update(fid, fin)
             try:
                 await self._apply()
@@ -89,6 +96,8 @@ class Manager:
         return killed
 
     async def toggle(self, fid: int, enabled: bool, actor: str, kill: bool = False) -> Forward:
+        if actor != "system":
+            self._quota_disabled.discard(fid)   # a person has taken control; a quota reset must not override them
         old = self.store.forward(fid)
         if old is None:
             raise KeyError(fid)
@@ -176,6 +185,31 @@ class Manager:
                             await self.toggle(f.id, inside, "system", kill=False)
                             self.store.audit("system", "forward.window_on" if inside else "forward.window_off",
                                              f"#{f.id} {f.name}")
+                now = datetime.now()
+                for f in self.store.forwards():
+                    if f.quota is None:
+                        self.quota_usage.pop(f.id, None)
+                        self._quota_disabled.discard(f.id)
+                        continue
+                    if f.expired():
+                        continue   # expiry owns this forward's state; a quota reset must not re-enable it
+                    used = (self.store.usage_since(f.id, int(quota.period_start(now, f.quota.period).timestamp()))
+                            + self.live_bytes(f.id))
+                    self.quota_usage[f.id] = used
+                    action = quota.quota_action(used, f.quota.bytes, f.enabled, f.id in self._quota_disabled)
+                    if action == "disable":
+                        await self.toggle(f.id, False, "system", kill=False)
+                        newly = f.id not in self._quota_disabled
+                        self._quota_disabled.add(f.id)
+                        self.store.audit("system", "forward.quota_reached", f"#{f.id} {f.name}", {"used": used, "limit": f.quota.bytes})
+                        if newly and self.notifier:
+                            self.notifier.notify("quota_reached", "warning",
+                                                 f"\u201c{f.name}\u201d reached its {f.quota.period} data quota and was turned off",
+                                                 {"forward_id": f.id, "used": used, "limit": f.quota.bytes})
+                    elif action == "enable":
+                        await self.toggle(f.id, True, "system", kill=False)
+                        self._quota_disabled.discard(f.id)
+                        self.store.audit("system", "forward.quota_reset", f"#{f.id} {f.name}")
                 if config.HOLD_FILE.exists():
                     continue
                 # under the lock, so a create/update that is mid-apply isn't mistaken for drift

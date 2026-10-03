@@ -41,6 +41,13 @@ class AccessWindow(BaseModel):
         return yesterday in self.days and t < self.end
 
 
+class Quota(BaseModel):
+    """A cap on total data (bytes in + out) per period. Reaching it disables the forward - it is
+    never deleted - and the user is asked whether to raise the quota or delete the forward."""
+    bytes: int = Field(ge=1, description="total bytes in + out allowed per period")
+    period: Literal["day", "week", "month"]
+
+
 class ForwardIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     protocol: Protocol = "tcp"
@@ -55,6 +62,7 @@ class ForwardIn(BaseModel):
                                                 description="max throughput, kbit/s, applied separately to each direction")
     expires_at: Optional[datetime] = None
     access_window: Optional[AccessWindow] = None
+    quota: Optional[Quota] = None
     enabled: bool = True
     description: str = Field(default="", max_length=500)
 
