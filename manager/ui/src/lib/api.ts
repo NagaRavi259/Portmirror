@@ -26,6 +26,8 @@ export interface ForwardStats {
   health: Health | null;
 }
 
+export interface AccessWindow { days: number[]; start: string; end: string }
+
 export interface ForwardBody {
   name: string;
   protocol: Protocol;
@@ -37,6 +39,7 @@ export interface ForwardBody {
   rate_limit: number | null;
   max_conns: number | null;
   bandwidth_limit_kbps: number | null;
+  access_window: AccessWindow | null;
   expires_at: string | null;
   enabled: boolean;
   description: string;

@@ -10,6 +10,37 @@ from . import config
 Protocol = Literal["tcp", "udp", "both"]
 
 
+class AccessWindow(BaseModel):
+    """Forward is on only during these hours on these days (gateway local time). Days are 0=Mon..6=Sun.
+    A window whose end is earlier than its start runs past midnight, attributed to the day it started."""
+    days: list[int] = Field(min_length=1)
+    start: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, v: list[int]) -> list[int]:
+        if any(d < 0 or d > 6 for d in v):
+            raise ValueError("days must be 0 (Mon) through 6 (Sun)")
+        return sorted(set(v))
+
+    @model_validator(mode="after")
+    def _distinct(self):
+        if self.start == self.end:
+            raise ValueError("start and end can't be the same time")
+        return self
+
+    def contains(self, now: datetime) -> bool:
+        t = now.strftime("%H:%M")
+        if self.start < self.end:
+            return now.weekday() in self.days and self.start <= t < self.end
+        # wraps midnight: the evening part belongs to today's day, the early-morning part to yesterday's
+        if now.weekday() in self.days and t >= self.start:
+            return True
+        yesterday = (now.weekday() - 1) % 7
+        return yesterday in self.days and t < self.end
+
+
 class ForwardIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     protocol: Protocol = "tcp"
@@ -23,6 +54,7 @@ class ForwardIn(BaseModel):
     bandwidth_limit_kbps: Optional[int] = Field(default=None, ge=1, le=10_000_000,
                                                 description="max throughput, kbit/s, applied separately to each direction")
     expires_at: Optional[datetime] = None
+    access_window: Optional[AccessWindow] = None
     enabled: bool = True
     description: str = Field(default="", max_length=500)
 

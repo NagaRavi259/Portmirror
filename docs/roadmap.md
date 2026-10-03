@@ -24,8 +24,9 @@ Everything else: grouped by theme, not yet prioritized, not yet planned in detai
   like this) rather than just adding an on/off switch.
 
 **Usability**
-- Resolving a forward's target by hostname instead of a fixed address. Considered and explicitly set aside -
-  see `feature-checklist.md`'s "needs a decision" section for why.
+- Resolving a forward's target by hostname instead of a fixed address. Deferred, to revisit later: address
+  stability is handled at the router with DHCP reservations for now. Open concerns if it's ever built: two
+  devices can report the same hostname (e.g. several `raspberrypi`), and some devices report none.
 
 **Access and sharing**
 - Read-only accounts, for sharing the dashboard without granting control.

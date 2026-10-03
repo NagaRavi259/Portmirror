@@ -95,21 +95,20 @@ and a bell icon in the header (unread badge, a dropdown panel, three actions per
   at 100. Acceptable for how infrequently these events actually fire (health flips, expiries, drift repairs are
   not high-volume by nature) - revisit only if real use shows otherwise
 
-### [ ] 4. Service presets / quick-add
+### [ ] 4. Service presets / quick-add — built, some test cases still open
 
 A dropdown of common services (RDP 3389, VNC 5900, SSH 22, Jellyfin 8096, Pi-hole 80, Home Assistant 8123,
-Plex 32400, Minecraft 25565, …) that pre-fills protocol and listen port in the new-forward form.
+Plex 32400, Minecraft 25565) that pre-fills protocol and local port in the new-forward form.
 
-**Plan:** a static list in the UI only (no backend change) - selecting a preset fills `protocol` and
-`listen_port` (never the target, since that's always specific to the user's own network) and the user still
-reviews/edits before saving. A "custom" option (today's blank form) stays the default.
+**Built:** `lib/presets.ts` (the list), and a "Start from a service" dropdown at the top of the new-forward
+form (create mode only; edit is unchanged). Picking a preset fills the port and protocol and nothing else -
+the remote target is never touched, since it's always specific to your own network.
 
 **Test cases:**
-- [ ] Each preset fills the exact protocol and port it claims to
-- [ ] Picking a preset, then changing the port manually, keeps the manual edit (the preset doesn't re-apply
-  and overwrite it)
-- [ ] Picking a different preset after one is already selected replaces the fields cleanly, no leftover state
-- [ ] A preset whose port conflicts with an existing forward still shows the normal inline conflict error
+- [x] Each preset fills the port it claims to - e2e (`UI-PRESET`) checks Jellyfin 8096 and Minecraft 25565 land in the port field
+- [ ] Protocol is set from the preset - *not really exercised yet*: every current preset is TCP, so a preset that changes protocol has never been tried
+- [x] Picking a second preset replaces the first cleanly - covered by the same e2e test (second pick replaces 8096 with 25565)
+- [ ] A preset whose port conflicts with an existing forward shows the normal inline conflict error - not yet tested explicitly
 
 ### [x] 5. Dark mode
 
@@ -142,26 +141,32 @@ and rebuilds itself when the theme changes, so it never drifts out of sync with 
   `rose`/`emerald`/`amber` utility usages and 21 `bg-white` usages across 15 files were audited and now all
   resolve through the same themeable tokens, rather than hand-patching each file
 
-### [ ] 6. Recurring access windows
+### [ ] 6. Recurring access windows — built, some test cases still open
 
-A forward that's only meant to be on during certain hours (e.g. 9am-10pm daily), instead of needing to be
-flipped by hand, and distinct from the existing one-shot `expires_at`.
+A forward that's only on during certain hours, on certain days, instead of being flipped by hand. Distinct
+from the one-shot `expires_at`.
 
-**Plan:** add a schedule to `ForwardIn` (e.g. days-of-week + start/end local time). The housekeeping loop,
-which already disables expired forwards every 5s, gains the same check for "outside its scheduled window" and
-toggles accordingly - reusing the exact enable/disable + kernel-apply path that already exists, not a new
-mechanism. A forward within its window behaves exactly like `enabled: true` does today.
+**Built:** an optional `access_window` on each forward: a set of weekdays plus a start and end time (gateway
+local time). A window whose end is earlier than its start runs past midnight. The housekeeping loop (every 5 s)
+acts only when a boundary is crossed - it never fights a manual change between boundaries. Form: a "Only on a
+schedule" switch with day toggles and start/end times. Detail page shows it as a chip.
 
 **Test cases:**
-- [ ] A forward turns on and off at the right wall-clock times, confirmed across a real day boundary (not just
-  asserted against a mocked clock)
-- [ ] A window that spans midnight (e.g. 10pm-6am) works correctly, not just same-day windows
-- [ ] Manually disabling a forward during its "on" window keeps it off until the next window start, rather than
-  the schedule fighting the manual override every 5s
-- [ ] A forward with both a schedule and a one-shot `expires_at` behaves sensibly when both are active
-- [ ] Existing forwards with no schedule set are completely unaffected
+- [x] Window turns a forward off outside its hours and on inside them - verified live: a Monday-only window
+  disabled a Saturday forward within 8 s; a Saturday 06:00-07:00 window (current time 06:2x) enabled it
+- [x] A manual disable inside an active window holds until the next boundary - verified live: disabled at 06:22:15,
+  still disabled 15 s later; audit trail records each window action separately from manual ones
+- [x] Midnight-wrapping windows and day boundaries - unit-tested (`test_access_window_wraps_midnight...`,
+  `test_access_window_same_day_range`)
+- [x] Validation rejects empty day lists, bad times, and start == end - unit-tested
+- [x] Schedule persists in the store - unit-tested (`test_forward_round_trips_its_access_window_through_the_store`)
+- [ ] A real midnight crossing observed on the live clock - not yet; covered by the unit test of the boundary logic instead
+- [ ] A forward with both a schedule and `expires_at` - not yet tested together
+- [x] Existing forwards with no schedule are unaffected - a forward with `access_window=None` is skipped entirely by the loop
 
-### [ ] 7. Per-forward bandwidth quota (bytes over a period)
+### [ ] 7. Per-forward bandwidth quota (bytes over a period) — decision made, not built
+
+**Decided (2026-10-03):** when a forward reaches its quota it is **disabled**, not deleted. The monitoring page shows it in a distinct colour as "quota reached", and a notification asks whether to increase the quota or delete the forward. **Still open:** how the quota combines with the realtime kbit/s cap on the same forward - proposed default: both apply independently, the cap limits speed and the quota limits total data.
 
 Distinct from the realtime kbit/s throughput cap already shipped (`bandwidth_limit_kbps` - done, see
 `progress.md`): a cumulative cap, e.g. "500 MB/day," after which the forward throttles hard or disables itself
@@ -185,48 +190,49 @@ boundary.
   ambiguously
 - [ ] The UI shows current usage against the quota (a progress bar or similar), updating live
 
-### [ ] 8. CSV export for history and audit
+### [ ] 8. CSV export for history and audit — built, some test cases still open
 
-**Plan:** `/api/export/history.csv` and `/api/export/audit.csv` endpoints alongside the existing JSON
-export/import; buttons on the relevant pages (History/dashboard, Audit log) next to the existing JSON export.
-
-**Test cases:**
-- [ ] Exported CSV headers and rows match the underlying data exactly (spot-checked against the JSON export of
-  the same range)
-- [ ] Values that could break naive CSV (commas, quotes, newlines in a forward's name or description) are
-  escaped correctly - confirmed by actually opening the export in a real spreadsheet app, not just checking
-  that it's technically valid CSV
-- [ ] A large export (the full retained history) completes without timing out or truncating
-
-### [ ] 9. Readable audit-log diffs
-
-Audit entries for an update already store `{before, after}` - render that as a field-by-field diff instead of
-a raw JSON dump.
-
-**Plan:** UI-only change to the Audit log page: when an entry's detail has `before`/`after` keys, render only
-the fields that actually changed, old value → new value, instead of the full JSON blob. Create/delete entries
-(no `before`/`after` pair) keep their current rendering.
+**Built:** `app/export.py` (pure rendering, unit-tested), `GET /api/export/audit.csv` and
+`GET /api/export/history.csv?forward_id=&range=`, served as attachments. Download buttons on the Audit log page
+and on each forward's History panel.
 
 **Test cases:**
-- [ ] Changing one field (e.g. just `rate_limit`) shows only that field in the diff, not the whole object
-- [ ] Changing several fields at once shows all of them, clearly separated
-- [ ] A field that didn't change is never shown as part of the diff, even if it's present in both `before` and
-  `after`
-- [ ] Create and delete entries still render sensibly (no empty/broken diff view)
-- [ ] The raw JSON is still reachable somehow (e.g. an expandable "raw" toggle) for anyone who wants it
+- [x] Exported headers and rows match the underlying data - verified live through a real browser session:
+  audit export 200 `text/csv`, correct header and 501 rows; history export correct header, ISO timestamps, 289 rows
+- [x] Values that could break naive CSV (commas, quotes, newlines) are escaped - unit-tested (`test_csv_quotes_commas...`)
+- [x] Spreadsheet formula injection is neutralised - a cell starting with `= + - @` gets a leading apostrophe,
+  unit-tested. Live note: the formula-looking name sits after the `#id` prefix in audit targets, so it never
+  starts a cell and was never a live formula; the defence is for any cell that does begin with user text
+- [ ] Opened in a real spreadsheet application (Excel / LibreOffice) - not yet done; needs a desktop app
+- [x] Large export completes - audit export capped at 100,000 rows; the live run returned 501 rows quickly
 
-### [ ] 10. PWA manifest (installable dashboard)
+### [ ] 9. Readable audit-log diffs — built, some test cases still open
 
-**Plan:** a `manifest.json`, an icon set, and enough of a service worker to pass installability checks - just
-"add to home screen" convenience, not offline support (the dashboard is meaningless without a live connection
-to the gateway, so there's no offline mode to build).
+**Built:** expanding an update entry now shows only the fields that changed, as `field — old → new`, with a
+"Show raw JSON" toggle for the full record. Create, delete and other entries without a before/after pair keep
+their raw view.
 
 **Test cases:**
-- [ ] A real mobile browser (not just a Lighthouse score) offers "Add to Home Screen," and it works
-- [ ] The installed icon and name are correct, not a generic browser icon
-- [ ] Launching from the home screen opens straight to the dashboard, already logged in if the session is
-  still valid
-- [ ] No regression to the ordinary in-browser experience for anyone who doesn't install it
+- [x] Changing one field shows only that field - verified live with a real `rate_limit` change (`— → 9`), and
+  restored afterwards; e2e `UI-AUDIT-DIFF` checks the same
+- [ ] Several fields changed at once - rendering is written for it, not yet exercised live
+- [x] Unchanged fields never appear - the diff compares both sides key by key
+- [x] Create and delete entries still render sensibly - the raw view is used when there's no before/after pair
+- [x] Raw JSON is reachable - "Show raw JSON" toggle
+
+### [ ] 10. PWA manifest (installable dashboard) — built, some test cases still open
+
+**Built:** `manifest.webmanifest` (standalone display, 192 and 512 icons plus a maskable 512), an Apple touch
+icon and iOS meta tags, and a service worker that deliberately caches nothing (the dashboard is live data).
+Icons were rendered from one SVG source. The worker registers only in a secure context.
+
+**Test cases:**
+- [x] Manifest and icons served by the gateway - verified live (200, correct content types)
+- [ ] Installs on an Android phone - *not possible over the plain-HTTP LAN address*: Chrome offers install only
+  from a secure origin. Needs the dashboard reached over HTTPS (e.g. Tailscale's HTTPS serve) to test
+- [x] iOS "Add to Home Screen" - the apple-touch-icon and web-app meta tags are present; not yet tried on a device
+- [ ] Launch from the home screen lands on the dashboard - not yet tested on a device
+- [x] No regression in the ordinary browser experience - the full e2e suite runs unchanged
 
 ## Needs a decision before planning further
 

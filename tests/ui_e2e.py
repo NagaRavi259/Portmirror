@@ -194,6 +194,8 @@ def main():
             return f"inline errors shown (reserved port, bad target, conflict); created; :{PORT} serves HTTP {code}"
         check("UI-CREATE", "Form validates inline, creates the forward, traffic flows", create)
 
+
+
         # ---- live metrics + kill one -------------------------------------------------
         tr = Traffic()
         tr.start()
@@ -312,6 +314,76 @@ def main():
             page.screenshot(path=f"{SHOTS}/09b-connections.png", full_page=True)
             return "recent/client/forward views all populated, client-IP filter narrows the list"
         check("UI-CONNECTIONS", "Connections page shows sessions and filters by client/forward", connections)
+
+        def csv_export():
+            audit = page.request.get(URL + "/api/export/audit.csv")
+            fid = next(f for f in page.request.get(URL + "/api/forwards").json() if f["name"] == "A - HTTP")["id"]
+            hist = page.request.get(URL + f"/api/export/history.csv?forward_id={fid}&range=24h")
+            assert audit.status == 200 and audit.headers["content-type"].startswith("text/csv"), audit.status
+            assert "attachment" in audit.headers["content-disposition"]
+            assert audit.text().splitlines()[0] == "time_utc,actor,action,target,detail"
+            assert hist.status == 200 and hist.text().splitlines()[0].startswith("time_utc,bucket_seconds")
+            return f"audit {len(audit.text().splitlines()) - 1} rows, history export served as attachment"
+
+        check("UI-CSV", "History and audit export as CSV downloads", csv_export)
+
+        def audit_diff():
+            # make a real, single-field update, then confirm the audit view shows only that field
+            # look the forward up by its seeded name, not a hard-coded id: other suites recreate forwards
+            # (replace-mode import), so ids change between runs
+            fwds = page.request.get(URL + "/api/forwards").json()
+            cur = next(f for f in fwds if f["name"] == "A - HTTP")
+            fid = cur["id"]
+            body = {k: cur[k] for k in ("name","protocol","listen_port","target_ip","target_port","allowed_sources","enabled","description")}
+            body.update(rate_limit=7)
+            assert page.request.put(URL + f"/api/forwards/{fid}", data=body).status == 200
+            body.update(rate_limit=None)
+            page.request.put(URL + f"/api/forwards/{fid}", data=body)   # restore
+            page.goto(URL + "/#/audit")
+            row = page.locator("li").filter(has_text=f"#{fid} ").filter(has_text="update").first
+            row.locator("button").first.click()
+            expect(row.get_by_text("rate_limit", exact=True)).to_be_visible(timeout=5000)
+            expect(row.get_by_role("button", name="Show raw JSON")).to_be_visible()
+            return "single changed field (rate_limit) shown as a diff, raw JSON one click away"
+        check("UI-AUDIT-DIFF", "Audit entry shows only the changed field, not the whole object", audit_diff)
+
+        def pwa():
+            m = page.request.get(URL + "/manifest.webmanifest").json()
+            assert m["display"] == "standalone" and any(i["sizes"] == "512x512" for i in m["icons"])
+            assert page.request.get(URL + "/icons/icon-192.png").status == 200
+            return "manifest served (standalone, 192 and 512 icons)"
+        check("UI-PWA", "Installable manifest and icons are served", pwa)
+
+        def preset():
+            page.goto(URL + "/#/")
+            page.get_by_role("button", name="New forward").first.click()
+            drawer = page.get_by_role("dialog", name="New forward")
+            expect(drawer).to_be_visible()
+            drawer.get_by_label("Service preset").select_option("jellyfin")
+            expect(drawer.get_by_placeholder("e.g. 3389")).to_have_value("8096")
+            drawer.get_by_label("Service preset").select_option("minecraft")
+            expect(drawer.get_by_placeholder("e.g. 3389")).to_have_value("25565")
+            page.keyboard.press("Escape")
+            expect(drawer).to_be_hidden()
+            return "picking a preset fills the port; a second pick replaces it cleanly"
+        check("UI-PRESET", "Service preset fills protocol and port in the new-forward form", preset)
+
+        def schedule_form():
+            page.goto(URL + "/#/")
+            page.get_by_role("button", name="New forward").first.click()
+            drawer = page.get_by_role("dialog", name="New forward")
+            expect(drawer).to_be_visible()
+            drawer.get_by_text("Limits & schedule").click()
+            drawer.get_by_role("switch", name="Only on a schedule").click()
+            sat = drawer.get_by_role("button", name="Sat", exact=True)
+            expect(sat).to_have_attribute("aria-pressed", "false")
+            sat.click()
+            expect(sat).to_have_attribute("aria-pressed", "true")
+            expect(drawer.get_by_label("Window start")).to_have_value("09:00")
+            page.keyboard.press("Escape")
+            expect(drawer).to_be_hidden()
+            return "schedule switch reveals day toggles and start/end times"
+        check("UI-SCHEDULE", "Recurring access window form controls work", schedule_form)
 
         def settings():
             page.goto(URL + "/#/settings")

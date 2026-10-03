@@ -712,3 +712,87 @@ def test_diag_run_produces_every_expected_check(store):
     for c in checks:
         assert c["status"] in ("ok", "warn", "fail", "skip"), c
         assert c["label"] and c["detail"]
+
+
+# ---- access windows ----------------------------------------------------------------
+def _at(weekday_mon0: int, hh: int, mm: int = 0) -> datetime:
+    base = datetime(2026, 10, 5, tzinfo=None)   # a Monday
+    return base + timedelta(days=weekday_mon0, hours=hh, minutes=mm)
+
+
+def test_access_window_same_day_range():
+    from app.models import AccessWindow
+    w = AccessWindow(days=[0, 1, 2, 3, 4], start="09:00", end="22:00")
+    assert w.contains(_at(0, 9, 0)) is True          # start is inclusive
+    assert w.contains(_at(0, 21, 59)) is True
+    assert w.contains(_at(0, 22, 0)) is False        # end is exclusive
+    assert w.contains(_at(0, 8, 59)) is False
+    assert w.contains(_at(5, 12, 0)) is False        # Saturday is not in the day list
+
+
+def test_access_window_wraps_midnight_and_attributes_early_hours_to_yesterday():
+    from app.models import AccessWindow
+    w = AccessWindow(days=[4], start="22:00", end="06:00")   # Friday night into Saturday morning
+    assert w.contains(_at(4, 23, 0)) is True      # Friday 23:00 - the window's own day
+    assert w.contains(_at(5, 3, 0)) is True       # Saturday 03:00 - still the Friday window
+    assert w.contains(_at(5, 7, 0)) is False      # Saturday 07:00 - past the end
+    assert w.contains(_at(6, 3, 0)) is False      # Sunday 03:00 - Saturday isn't in the day list
+
+
+def test_access_window_validation():
+    from app.models import AccessWindow
+    with pytest.raises(ValidationError):
+        AccessWindow(days=[], start="09:00", end="10:00")
+    with pytest.raises(ValidationError):
+        AccessWindow(days=[7], start="09:00", end="10:00")
+    with pytest.raises(ValidationError):
+        AccessWindow(days=[0], start="25:00", end="10:00")
+    with pytest.raises(ValidationError):
+        AccessWindow(days=[0], start="09:00", end="09:00")
+
+
+def test_forward_round_trips_its_access_window_through_the_store(store):
+    from app.models import AccessWindow
+    f = store.create(ForwardIn(name="w", listen_port=7777, target_ip="10.0.0.12", target_port=80,
+                               access_window=AccessWindow(days=[0, 6], start="09:00", end="22:00")))
+    got = store.forward(f.id)
+    assert got.access_window is not None and got.access_window.days == [0, 6]
+    plain = store.create(ForwardIn(name="p", listen_port=7778, target_ip="10.0.0.12", target_port=80))
+    assert store.forward(plain.id).access_window is None
+
+
+# ---- CSV export --------------------------------------------------------------------
+def test_csv_neutralises_formula_injection_but_not_numbers():
+    from app import export
+    assert export.cell("=HYPERLINK(\"http://x\")").startswith("'=")
+    assert export.cell("+1+1").startswith("'+")
+    assert export.cell("-2").startswith("'-")          # a text cell that begins with '-' is still neutralised
+    assert export.cell("@SUM(A1)").startswith("'@")
+    assert export.cell(-2) == "-2"                     # a real negative number is left alone
+    assert export.cell(0.5) == "0.5"
+    assert export.cell("plain") == "plain"
+
+
+def test_csv_quotes_commas_quotes_and_newlines_correctly():
+    import csv, io
+    from app import export
+    text = export.to_csv(["a", "b"], [["one, two", "say \"hi\""], ["line1\nline2", None]])
+    rows = list(csv.reader(io.StringIO(text)))
+    assert rows[0] == ["a", "b"]
+    assert rows[1] == ["one, two", "say \"hi\""]
+    assert rows[2] == ["line1\nline2", ""]
+
+
+def test_audit_csv_serialises_structured_detail():
+    from app import export
+    text = export.audit_csv([{"ts": "2026-10-03T00:00:00+00:00", "actor": "admin", "action": "forward.update",
+                              "target": "#1 x", "detail": {"before": {"rate_limit": 5}, "after": {"rate_limit": 9}}}])
+    lines = text.strip().split("\n")
+    assert lines[0] == "time_utc,actor,action,target,detail"
+    assert "rate_limit" in lines[1] and lines[1].startswith("2026-10-03T00:00:00+00:00,admin,")
+
+
+def test_history_csv_uses_iso_times():
+    from app import export
+    text = export.history_csv([{"t": 0, "new_per_s": 1.5, "in_bps": 800, "out_bps": 0, "live": 2}], 300)
+    assert text.splitlines()[1].startswith("1970-01-01T00:00:00+00:00,300,")

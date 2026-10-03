@@ -1,4 +1,4 @@
-import { ChevronRight, ScrollText } from "lucide-react";
+import { ChevronRight, Download, ScrollText } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Card, Empty, Spinner, cx } from "../components/ui";
 import { Api, AuditEntry } from "../lib/api";
@@ -36,6 +36,9 @@ export function Audit({ deviceNames }: { deviceNames: Record<string, string> }) 
         <h1 className="text-2xl font-semibold tracking-tight text-ink-950">Audit log</h1>
         <p className="mt-1 text-sm text-ink-500">Every change to the gateway — who, what and when.</p>
       </div>
+      <div className="flex justify-end">
+        <a className="btn-outline" href="/api/export/audit.csv" download><Download size={15} /> Export CSV</a>
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {groups.map((g) => (
           <button key={g} onClick={() => setFilter(g)}
@@ -59,11 +62,7 @@ export function Audit({ deviceNames }: { deviceNames: Record<string, string> }) 
                     <span className="min-w-0 flex-1 truncate text-sm text-ink-900">{withDeviceNames(r.target, deviceNames)}</span>
                     <span className="shrink-0 font-mono text-xs text-ink-500">{r.actor}</span>
                   </button>
-                  {open === r.id && (
-                    <pre className="mx-5 mb-3 max-h-72 overflow-auto rounded-lg border border-line bg-canvas p-3 font-mono text-[11.5px] leading-5 text-ink-700 scroll-thin">
-                      {r.detail ? withDeviceNames(JSON.stringify(r.detail, null, 2), deviceNames) : "no details"}
-                    </pre>
-                  )}
+                  {open === r.id && <AuditDetail detail={r.detail} deviceNames={deviceNames} />}
                 </li>
               );
             })}
@@ -77,6 +76,58 @@ export function Audit({ deviceNames }: { deviceNames: Record<string, string> }) 
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+/** Changed fields only, old value -> new value, for entries that recorded a before/after pair.
+ * Anything else (creates, deletes, actions with no pair) returns null and shows its raw detail. */
+export function changedFields(detail: unknown): { key: string; before: unknown; after: unknown }[] | null {
+  if (!detail || typeof detail !== "object") return null;
+  const d = detail as Record<string, unknown>;
+  const before = d.before as Record<string, unknown> | undefined;
+  const after = d.after as Record<string, unknown> | undefined;
+  if (!before || !after || typeof before !== "object" || typeof after !== "object") return null;
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  return keys
+    .filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]))
+    .map((k) => ({ key: k, before: before[k], after: after[k] }));
+}
+
+function show(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function AuditDetail({ detail, deviceNames }: { detail: unknown; deviceNames: Record<string, string> }) {
+  const [raw, setRaw] = useState(false);
+  const diff = changedFields(detail);
+  const rawText = detail ? withDeviceNames(JSON.stringify(detail, null, 2), deviceNames) : "no details";
+  return (
+    <div className="mx-5 mb-3 rounded-lg border border-line bg-canvas p-3">
+      {diff && !raw ? (
+        diff.length === 0 ? <p className="text-sm text-ink-500">Nothing changed.</p> : (
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {diff.map((c) => (
+                <tr key={c.key} className="border-b border-line/70 last:border-0">
+                  <td className="w-44 py-1.5 pr-3 font-mono text-ink-500">{c.key}</td>
+                  <td className="py-1.5 pr-3 font-mono text-rose-600 line-through decoration-rose-300">{withDeviceNames(show(c.before), deviceNames)}</td>
+                  <td className="py-1.5 font-mono font-medium text-emerald-700">{withDeviceNames(show(c.after), deviceNames)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : (
+        <pre className="max-h-72 overflow-auto font-mono text-[11.5px] leading-5 text-ink-700 scroll-thin">{rawText}</pre>
+      )}
+      {diff && (
+        <button className="mt-2 text-xs font-medium text-accent-600 hover:underline" onClick={() => setRaw((v) => !v)}>
+          {raw ? "Show changes only" : "Show raw JSON"}
+        </button>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { ArrowRight, ChevronDown, Plus, ShieldCheck, X } from "lucide-react";
 import { FormEvent, KeyboardEvent, useMemo, useState } from "react";
 import { Api, ApiError, Forward, ForwardBody, Protocol, SystemInfo } from "../lib/api";
 import { ports, protoLabel } from "../lib/format";
+import { SERVICE_PRESETS } from "../lib/presets";
 import { useToast } from "./Toasts";
 import { Drawer, Field, Segmented, Spinner, Switch, cx } from "./ui";
 
@@ -22,6 +23,7 @@ type Expiry = "never" | "1h" | "8h" | "24h" | "7d" | "custom";
 interface State {
   name: string; protocol: Protocol; listen: string; listenEnd: string; useRange: boolean;
   targetIp: string; targetPort: string; sources: string[]; rateLimit: string; maxConns: string; bandwidthLimit: string;
+  schedOn: boolean; schedDays: number[]; schedStart: string; schedEnd: string;
   expiry: Expiry; expiresCustom: string; enabled: boolean; description: string;
 }
 
@@ -37,6 +39,8 @@ function initial(f?: Forward, lanNet = "192.168.88.0/24"): State {
     sources: f?.allowed_sources ?? [lanNet], rateLimit: f?.rate_limit ? String(f.rate_limit) : "",
     maxConns: f?.max_conns ? String(f.max_conns) : "",
     bandwidthLimit: f?.bandwidth_limit_kbps ? String(f.bandwidth_limit_kbps) : "",
+    schedOn: !!f?.access_window, schedDays: f?.access_window?.days ?? [0, 1, 2, 3, 4],
+    schedStart: f?.access_window?.start ?? "09:00", schedEnd: f?.access_window?.end ?? "22:00",
     expiry: f?.expires_at ? "custom" : "never",
     expiresCustom: f?.expires_at ? toLocal(f.expires_at) : "", enabled: f?.enabled ?? true, description: f?.description ?? "",
   };
@@ -51,7 +55,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
   const [serverErr, setServerErr] = useState<{ msg: string; fields: Record<string, string> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [srcDraft, setSrcDraft] = useState("");
-  const [showAdv, setShowAdv] = useState(!!(forward?.rate_limit || forward?.max_conns || forward?.bandwidth_limit_kbps || forward?.expires_at));
+  const [showAdv, setShowAdv] = useState(!!(forward?.rate_limit || forward?.max_conns || forward?.bandwidth_limit_kbps || forward?.access_window || forward?.expires_at));
   const [killOld, setKillOld] = useState(false);
   const set = <K extends keyof State>(k: K, v: State[K]) => setS((x) => ({ ...x, [k]: v }));
 
@@ -85,6 +89,8 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
     if (s.maxConns && !(Number(s.maxConns) >= 1)) e.maxConns = "≥ 1";
     if (s.bandwidthLimit && !(Number(s.bandwidthLimit) >= 1)) e.bandwidthLimit = "≥ 1";
     if (s.expiry === "custom" && !s.expiresCustom) e.expiry = "Pick a date and time";
+    if (s.schedOn && !s.schedDays.length) e.schedule = "Pick at least one day";
+    if (s.schedOn && s.schedStart === s.schedEnd) e.schedule = "Start and end can't be the same time";
     if (!e.listen && !e.listenEnd && s.enabled) {
       const protos = s.protocol === "both" ? ["tcp", "udp"] : [s.protocol];
       const hit = all.find((o) => o.id !== forward?.id && o.enabled && !o.expired &&
@@ -129,6 +135,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
       target_port: tp, allowed_sources: s.sources, rate_limit: s.rateLimit ? Number(s.rateLimit) : null,
       max_conns: s.maxConns ? Number(s.maxConns) : null,
       bandwidth_limit_kbps: s.bandwidthLimit ? Number(s.bandwidthLimit) : null,
+      access_window: s.schedOn ? { days: s.schedDays, start: s.schedStart, end: s.schedEnd } : null,
       expires_at: expiresAt(), enabled: s.enabled,
       description: s.description.trim(),
     };
@@ -190,6 +197,23 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
             placeholder="e.g. Office RDP" autoFocus={!forward}
             onChange={(e) => set("name", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, name: true }))} />
         </Field>
+
+        {!forward && (
+          <Field label="Start from a service" hint="Fills in the protocol and port only - you still set the target">
+            <select className="input" aria-label="Service preset" value=""
+              onChange={(e) => {
+                const p = SERVICE_PRESETS.find((x) => x.id === e.target.value);
+                if (!p) return;
+                set("protocol", p.protocol);
+                set("listen", String(p.port));
+                set("useRange", false);
+                set("listenEnd", "");
+              }}>
+              <option value="">Choose a preset…</option>
+              {SERVICE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label} · :{p.port}</option>)}
+            </select>
+          </Field>
+        )}
 
         <Field label="Protocol">
           <Segmented value={s.protocol} onChange={(v) => set("protocol", v)}
@@ -273,6 +297,31 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
               <Field label="Bandwidth limit" hint="kbit/s, each direction" error={fieldErr("bandwidthLimit", "bandwidth_limit_kbps")}>
                 <input className="input num" inputMode="numeric" placeholder="unlimited" value={s.bandwidthLimit}
                   onChange={(e) => set("bandwidthLimit", e.target.value.replace(/\D/g, ""))} />
+              </Field>
+              <Field label="Only on a schedule" hint="Off outside these hours; a manual change holds until the next boundary"
+                error={fieldErr("schedule", "access_window")}>
+                <div className="space-y-3">
+                  <Switch checked={s.schedOn} onChange={(v) => set("schedOn", v)} label="Only on a schedule" />
+                  {s.schedOn && (<>
+                    <div className="flex flex-wrap gap-1.5">
+                      {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => {
+                        const on = s.schedDays.includes(i);
+                        return (
+                          <button type="button" key={d} aria-pressed={on} onClick={() => set("schedDays", on ? s.schedDays.filter((x) => x !== i) : [...s.schedDays, i].sort())}
+                            className={cx("h-8 min-w-[3rem] rounded-md px-2 text-xs font-semibold transition",
+                              on ? "bg-accent-500 text-oncolor" : "bg-canvas text-ink-500 ring-1 ring-line hover:text-ink-900")}>{d}</button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="time" className="input num h-9 w-auto" value={s.schedStart} aria-label="Window start"
+                        onChange={(e) => set("schedStart", e.target.value)} />
+                      <span className="text-ink-400">to</span>
+                      <input type="time" className="input num h-9 w-auto" value={s.schedEnd} aria-label="Window end"
+                        onChange={(e) => set("schedEnd", e.target.value)} />
+                    </div>
+                  </>)}
+                </div>
               </Field>
               <Field label="Auto-disable" error={fieldErr("expiry", "expires_at")}
                 hint={s.expiry === "never" ? "The forward stays on until you turn it off." : "It switches itself off at that time; existing connections drain."}>

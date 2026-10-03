@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Ban, Clock, Gauge, Pencil, ShieldCheck, Timer, Trash2, Unplug, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Ban, Clock, Download, Gauge, Pencil, ShieldCheck, Timer, Trash2, Unplug, Users } from "lucide-react";
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { TimeChart } from "../components/Charts";
 import { useToast } from "../components/Toasts";
@@ -25,6 +25,13 @@ const STATE_TONE: Record<string, string> = {
   TIME_WAIT: "bg-ink-950/[.05] text-ink-500", CLOSE: "bg-ink-950/[.05] text-ink-500", CLOSE_WAIT: "bg-ink-950/[.05] text-ink-500",
   FIN_WAIT: "bg-ink-950/[.05] text-ink-500", LAST_ACK: "bg-ink-950/[.05] text-ink-500",
 };
+
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function scheduleLabel(w: { days: number[]; start: string; end: string }): string {
+  const days = w.days.length === 7 ? "every day"
+    : w.days.map((d) => DAY_NAMES[d]).join(" ");
+  return `${days} ${w.start}–${w.end}`;
+}
 
 export function ForwardDetail({ forward, snap, system, deviceNames, onDeviceNamesChanged, onEdit, onRemove, onToggle }: {
   forward: Forward | undefined; snap: Snapshot | null; system: SystemInfo | null;
@@ -172,11 +179,12 @@ export function ForwardDetail({ forward, snap, system, deviceNames, onDeviceName
             </div>
           </div>
         </div>
-        {(forward.rate_limit || forward.max_conns || forward.bandwidth_limit_kbps || forward.expires_at) && (
+        {(forward.rate_limit || forward.max_conns || forward.bandwidth_limit_kbps || forward.access_window || forward.expires_at) && (
           <div className="relative flex flex-wrap gap-2 border-t border-line/80 px-5 py-2.5 text-xs">
             {forward.rate_limit && <span className="chip bg-amber-50 text-amber-700"><Clock size={12} /> ≤ {forward.rate_limit} new conns/s</span>}
             {forward.max_conns && <span className="chip bg-amber-50 text-amber-700"><Users size={12} /> ≤ {forward.max_conns} concurrent</span>}
             {forward.bandwidth_limit_kbps && <span className="chip bg-amber-50 text-amber-700"><Gauge size={12} /> ≤ {bps(forward.bandwidth_limit_kbps * 1000)} each way</span>}
+            {forward.access_window && <span className="chip bg-amber-50 text-amber-700"><Clock size={12} /> {scheduleLabel(forward.access_window)}</span>}
             {forward.expires_at && <span className="chip bg-amber-50 text-amber-700"><Timer size={12} /> {forward.expired ? "expired" : `auto-disables ${until(forward.expires_at)}`}</span>}
           </div>
         )}
@@ -200,7 +208,12 @@ export function ForwardDetail({ forward, snap, system, deviceNames, onDeviceName
 
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-ink-900">History</h2>
-        <Segmented value={range} onChange={setRange} options={RANGES} />
+        <div className="flex items-center gap-2">
+          <a className="btn-ghost h-8 px-2.5 text-xs" href={`/api/export/history.csv?forward_id=${forward.id}&range=${range}`} download>
+            <Download size={13} /> CSV
+          </a>
+          <Segmented value={range} onChange={setRange} options={RANGES} />
+        </div>
       </div>
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="p-5">

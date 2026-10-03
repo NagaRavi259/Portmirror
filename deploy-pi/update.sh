@@ -64,6 +64,19 @@ echo "What's new in $latest:"
 sed 's/^/    /' <<<"$notes"
 echo
 
+cat <<EOF
+What this update does, step by step:
+  1. Stops the manager and base services - live forwards pause for a few seconds
+  2. Backs up the current install to $INSTALL_DIR.bak
+  3. Replaces the application, the web UI, the pmctl command, and this updater
+  4. Reinstalls Python dependencies if the release changed them
+  5. Starts the services again and confirms the manager stays up
+  6. If any step fails, restores the previous version automatically
+
+Not touched: your forwards, settings (/etc/portmirror), history and audit log (/var/lib/portmirror).
+
+EOF
+
 if [ "${1:-}" != "--yes" ]; then
   read -rp "Install $latest now? Services will restart briefly. [y/N] " ok
   [ "$ok" = "y" ] || { echo "Cancelled."; exit 0; }

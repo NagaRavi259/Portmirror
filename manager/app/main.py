@@ -6,11 +6,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 
 from . import config, diag, engine
+from . import export as csvexport
 from .auth import COOKIE, Auth
 from .collector import Collector
 from .models import DeviceNameIn, ForwardIn, ImportIn, KillConnIn, LoginIn, NotificationStateIn, PasswordIn, ToggleIn, TokenIn
@@ -244,6 +245,22 @@ async def diagnostics(_: str = Depends(who)):
 @app.get("/api/audit")
 async def audit(limit: int = Query(200, le=1000), before: int | None = None, _: str = Depends(who)):
     return store.audit_log(limit, before)
+
+
+@app.get("/api/export/audit.csv")
+async def export_audit_csv(_: str = Depends(who)):
+    body = csvexport.audit_csv(store.audit_log(limit=100_000))
+    return Response(body, media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="portmirror-audit.csv"'})
+
+
+@app.get("/api/export/history.csv")
+async def export_history_csv(forward_id: int = Query(0, ge=0), range: str = Query("all", pattern=RANGE_RE),
+                             _: str = Depends(who)):
+    h = collector.history(forward_id, range)
+    body = csvexport.history_csv(h["points"], h.get("step_s"))
+    name = f"portmirror-history-{'all' if forward_id == 0 else f'forward-{forward_id}'}-{range}.csv"
+    return Response(body, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/connection-log")

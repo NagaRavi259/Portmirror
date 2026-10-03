@@ -21,6 +21,9 @@ class Manager:
         self._cache: list[Forward] = store.forwards()
         self.on_change = lambda: None   # collector bumps its version here
         self.last_apply: Optional[str] = None
+        # last window state applied per forward - the schedule only acts when a boundary is crossed,
+        # so a manual change made inside a window holds until the next boundary, not every 5 s
+        self._window_seen: dict[int, bool] = {}
 
     def forwards(self) -> list[Forward]:
         return self._cache
@@ -162,6 +165,17 @@ class Manager:
                         if self.notifier:
                             self.notifier.notify("forward_expired", "info", f"“{f.name}” turned off - its expiry time passed",
                                                  {"forward_id": f.id})
+                for f in self.store.forwards():
+                    if f.access_window is None or f.expired():
+                        self._window_seen.pop(f.id, None)
+                        continue
+                    inside = f.access_window.contains(datetime.now())
+                    if self._window_seen.get(f.id) != inside:
+                        self._window_seen[f.id] = inside
+                        if f.enabled != inside:
+                            await self.toggle(f.id, inside, "system", kill=False)
+                            self.store.audit("system", "forward.window_on" if inside else "forward.window_off",
+                                             f"#{f.id} {f.name}")
                 if config.HOLD_FILE.exists():
                     continue
                 # under the lock, so a create/update that is mid-apply isn't mistaken for drift
