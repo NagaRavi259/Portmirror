@@ -8,7 +8,7 @@ real browser, per this project's own standard (see `progress.md`), not just unit
 
 ## Selected for implementation
 
-### [ ] 1. Built-in diagnostics ("Doctor") — implemented, not fully exercised yet
+### [x] 1. Built-in diagnostics ("Doctor") — all test cases passed
 
 One button (UI page, and a `pmctl diag` equivalent) that runs everything that's currently a manual log-reading
 exercise, and shows a clear pass/fail per check instead.
@@ -22,15 +22,15 @@ by construction.
 
 **Test cases:**
 - [x] Every check reports pass under a healthy stack — confirmed live against the real running gateway
-- [ ] A deliberately broken ruleset (syntax error written directly, bypassing the app) is reported as failing,
-  specifically, not just "something's wrong" — not yet exercised; would need the self-heal housekeeping loop
-  paused first (it repairs kernel drift within seconds, which would otherwise mask the broken state before a
-  check could observe it)
-- [ ] The VPN-down case (interface carrier lost) is reported correctly, distinctly from a route-missing case —
-  not yet exercised; needs a safe way to simulate carrier loss without disrupting the shared dev host's own
-  networking
-- [ ] High conntrack usage (near `nf_conntrack_max`) is flagged before it actually fills up — not yet
-  exercised; needs a realistic way to generate that much load
+- [x] A deliberately broken ruleset is reported as failing, specifically - verified live: with the self-heal
+  paused (hold file), the live chain was flushed; diagnostics showed `[FAIL] Live rules match the configuration -
+  kernel has 0 DNAT rule(s), the configuration expects 7`. Found and fixed: the old checks passed a flushed table.
+  A new `kernel_matches` check compares live rules with the configuration; unit-tested
+- [x] The VPN-down case is reported correctly, distinctly from a route-missing case - verified live with
+  `vpn0` taken down inside the gateway's own namespace: the interface check reads `vpn0: down` and the route check
+  reads `routed via another interface, not vpn0` (the default route had passed it before the fix)
+- [x] High conntrack usage is flagged before it fills up - verified live with real UDP entries from a client:
+  WARN at 79.4%, FAIL at 90.7%, FAIL at 100% when full; the table drained afterwards
 - [x] `pmctl diag`'s output and the UI page agree on every check, every time — true by construction (same
   endpoint), and cross-checked directly in both the pass and fail cases below
 - [x] Running it causes no disruption to live traffic — confirmed across every run during testing, including
@@ -95,7 +95,7 @@ and a bell icon in the header (unread badge, a dropdown panel, three actions per
   at 100. Acceptable for how infrequently these events actually fire (health flips, expiries, drift repairs are
   not high-volume by nature) - revisit only if real use shows otherwise
 
-### [ ] 4. Service presets / quick-add — built, some test cases still open
+### [x] 4. Service presets / quick-add — all test cases passed
 
 A dropdown of common services (RDP 3389, VNC 5900, SSH 22, Jellyfin 8096, Pi-hole 80, Home Assistant 8123,
 Plex 32400, Minecraft 25565) that pre-fills protocol and local port in the new-forward form.
@@ -106,9 +106,11 @@ the remote target is never touched, since it's always specific to your own netwo
 
 **Test cases:**
 - [x] Each preset fills the port it claims to - e2e (`UI-PRESET`) checks Jellyfin 8096 and Minecraft 25565 land in the port field
-- [ ] Protocol is set from the preset - *not really exercised yet*: every current preset is TCP, so a preset that changes protocol has never been tried
+- [x] Protocol is set from the preset - two UDP presets added (WireGuard 51820, Minecraft Bedrock 19132); e2e
+  `UI-PRESET-UDP` checks UDP becomes active, and a TCP preset switches it back
 - [x] Picking a second preset replaces the first cleanly - covered by the same e2e test (second pick replaces 8096 with 25565)
-- [ ] A preset whose port conflicts with an existing forward shows the normal inline conflict error - not yet tested explicitly
+- [x] A preset whose port conflicts with an existing forward shows the inline conflict error - e2e
+  `UI-PRESET-CONFLICT` (RDP on 3389 names "C - RDP"). A preset now marks the port touched, so the message shows at once
 
 ### [x] 5. Dark mode
 
@@ -161,7 +163,8 @@ schedule" switch with day toggles and start/end times. Detail page shows it as a
 - [x] Validation rejects empty day lists, bad times, and start == end - unit-tested
 - [x] Schedule persists in the store - unit-tested (`test_forward_round_trips_its_access_window_through_the_store`)
 - [ ] A real midnight crossing observed on the live clock - not yet; covered by the unit test of the boundary logic instead
-- [ ] A forward with both a schedule and `expires_at` - not yet tested together
+- [x] A forward with both a schedule and `expires_at` - verified live: a window open all day with expiry in 90 s;
+  the forward switched off at expiry (t~100 s) and stayed off while the window was open
 - [x] Existing forwards with no schedule are unaffected - a forward with `access_window=None` is skipped entirely by the loop
 
 ### [ ] 7. Per-forward bandwidth quota (bytes over a period) — built, verification in progress
@@ -223,10 +226,13 @@ and on each forward's History panel.
 - [x] Spreadsheet formula injection is neutralised - a cell starting with `= + - @` gets a leading apostrophe,
   unit-tested. Live note: the formula-looking name sits after the `#id` prefix in audit targets, so it never
   starts a cell and was never a live formula; the defence is for any cell that does begin with user text
-- [ ] Opened in a real spreadsheet application (Excel / LibreOffice) - not yet done; needs a desktop app
+- [x] Opened in LibreOffice - verified with headless LibreOffice Calc: the CSV converts with accented and curly-quote
+  text intact. Found and fixed: no byte-order mark, which makes Excel on Windows misread non-ASCII text; the export now
+  starts with a UTF-8 BOM (e2e `UI-CSV` checks it)
+- [ ] Opened in Excel on Windows - not available in this environment; the BOM is in place for it
 - [x] Large export completes - audit export capped at 100,000 rows; the live run returned 501 rows quickly
 
-### [ ] 9. Readable audit-log diffs — built, some test cases still open
+### [x] 9. Readable audit-log diffs — all test cases passed
 
 **Built:** expanding an update entry now shows only the fields that changed, as `field — old → new`, with a
 "Show raw JSON" toggle for the full record. Create, delete and other entries without a before/after pair keep
@@ -235,7 +241,8 @@ their raw view.
 **Test cases:**
 - [x] Changing one field shows only that field - verified live with a real `rate_limit` change (`— → 9`), and
   restored afterwards; e2e `UI-AUDIT-DIFF` checks the same
-- [ ] Several fields changed at once - rendering is written for it, not yet exercised live
+- [x] Several fields changed at once - verified live (four fields in one save: name, description, rate_limit,
+  max_conns all listed; unchanged fields left out); e2e `UI-AUDIT-MULTI`
 - [x] Unchanged fields never appear - the diff compares both sides key by key
 - [x] Create and delete entries still render sensibly - the raw view is used when there's no before/after pair
 - [x] Raw JSON is reachable - "Show raw JSON" toggle

@@ -62,6 +62,12 @@ def iface_status(state: str) -> tuple[str, str]:
     return "fail", state
 
 
+def rules_match_status(loaded: int, expected: int) -> tuple[str, str]:
+    if loaded == expected:
+        return "ok", f"{expected} DNAT rule(s) loaded, matching the configuration"
+    return "fail", f"kernel has {loaded} DNAT rule(s), the configuration expects {expected}"
+
+
 def target_health_status(statuses: list[dict | None]) -> tuple[str, str]:
     known = [s for s in statuses if s is not None]
     if not known:
@@ -90,12 +96,29 @@ async def _kernel_table(forwards) -> dict:
     return _check("kernel_table", "Kernel table present", status, "table ip pm does not exist yet")
 
 
+async def _kernel_matches(forwards) -> dict:
+    ks = await engine.kernel_state()
+    loaded = ks.prerouting_rules if ks.exists else 0
+    status, detail = rules_match_status(loaded, engine.expected_prerouting_rules(forwards))
+    return _check("kernel_matches", "Live rules match the configuration", status, detail)
+
+
+def vpn_route_status(rc: int, out: str, err: str, vpn_if: str) -> tuple[str, str]:
+    # A route that exists but leaves by another interface (e.g. the default route via LAN when vpn0 is
+    # down) is a failure: traffic for the VPN network would go the wrong way.
+    line = (out or err or "no route").strip().splitlines()[0]
+    if rc == 0 and "unreachable" not in out and f"dev {vpn_if} " in out + " ":
+        return "ok", out.splitlines()[0].strip()
+    if rc == 0 and "unreachable" not in out:
+        return "fail", f"routed via another interface, not {vpn_if}: {line}"
+    return "fail", line
+
+
 async def _vpn_route() -> dict:
     target = str(config.VPN_NET.network_address + 1)
     rc, out, err = await engine.run("ip", "route", "get", target)
-    if rc == 0 and "unreachable" not in out:
-        return _check("vpn_route", "Route to the VPN network", "ok", out.splitlines()[0].strip() if out else "reachable")
-    return _check("vpn_route", "Route to the VPN network", "fail", (err or out or "no route").strip().splitlines()[0])
+    status, detail = vpn_route_status(rc, out, err, config.VPN_IF)
+    return _check("vpn_route", "Route to the VPN network", status, detail)
 
 
 def _iface_check(id_: str, label: str, name: str) -> dict:
@@ -151,9 +174,11 @@ async def _service_restarts() -> dict:
 
 async def run(manager, collector, prober) -> list[dict]:
     forwards = manager.forwards()
+    async with manager.lock:  # a create/update mid-apply isn't a mismatch
+        kernel_checks = [await _kernel_table(forwards), await _kernel_matches(forwards)]
     checks = [
         await _nft_syntax(forwards),
-        await _kernel_table(forwards),
+        *kernel_checks,
         await _vpn_route(),
         _iface_check("lan_iface", "LAN interface", config.LAN_IF),
         _iface_check("vpn_iface", "VPN interface", config.VPN_IF),

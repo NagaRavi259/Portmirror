@@ -321,8 +321,9 @@ def main():
             hist = page.request.get(URL + f"/api/export/history.csv?forward_id={fid}&range=24h")
             assert audit.status == 200 and audit.headers["content-type"].startswith("text/csv"), audit.status
             assert "attachment" in audit.headers["content-disposition"]
-            assert audit.text().splitlines()[0] == "time_utc,actor,action,target,detail"
-            assert hist.status == 200 and hist.text().splitlines()[0].startswith("time_utc,bucket_seconds")
+            assert audit.body()[:3] == b"\xef\xbb\xbf", "UTF-8 BOM missing - Excel would misread non-ASCII text"
+            assert audit.text().lstrip("\ufeff").splitlines()[0] == "time_utc,actor,action,target,detail"
+            assert hist.status == 200 and hist.text().lstrip("\ufeff").splitlines()[0].startswith("time_utc,bucket_seconds")
             return f"audit {len(audit.text().splitlines()) - 1} rows, history export served as attachment"
 
         check("UI-CSV", "History and audit export as CSV downloads", csv_export)
@@ -347,6 +348,32 @@ def main():
             return "single changed field (rate_limit) shown as a diff, raw JSON one click away"
         check("UI-AUDIT-DIFF", "Audit entry shows only the changed field, not the whole object", audit_diff)
 
+        def audit_diff_many():
+            # several fields at once: the diff lists exactly those, and leaves out the ones that didn't change
+            body = {"name": "UI multi-diff", "protocol": "tcp", "listen_port": 7721, "listen_port_end": None,
+                    "target_ip": "10.0.0.12", "target_port": 80, "allowed_sources": ["192.168.88.0/24"],
+                    "rate_limit": None, "max_conns": None, "bandwidth_limit_kbps": None, "access_window": None,
+                    "quota": None, "expires_at": None, "enabled": True, "description": "before"}
+            r = page.request.post(URL + "/api/forwards", data=body)
+            fid = r.json().get("id") if r.ok else None
+            try:
+                assert r.status == 201, r.status   # create returns 201 Created
+                body.update(name="UI multi-diff renamed", description="after", rate_limit=500, max_conns=20)
+                assert page.request.put(URL + f"/api/forwards/{fid}", data=body).status == 200
+                page.goto(URL + "/#/audit")
+                page.reload()   # the page may already be on the audit view from the check above; reload so the list is fresh
+                row = page.locator("li").filter(has_text=f"#{fid} ").filter(has_text="update").first
+                row.locator("button").first.click()
+                for field in ("name", "description", "rate_limit", "max_conns"):
+                    expect(row.get_by_text(field, exact=True)).to_be_visible(timeout=5000)
+                assert row.get_by_text("listen_port", exact=True).count() == 0, "unchanged field shown"
+                assert row.get_by_text("target_ip", exact=True).count() == 0, "unchanged field shown"
+                return "four fields changed in one save: all four listed, unchanged fields left out"
+            finally:
+                if fid is not None:
+                    page.request.delete(URL + f"/api/forwards/{fid}?kill=true")
+        check("UI-AUDIT-MULTI", "Several fields changed in one save all show in the audit diff", audit_diff_many)
+
         def pwa():
             m = page.request.get(URL + "/manifest.webmanifest").json()
             assert m["display"] == "standalone" and any(i["sizes"] == "512x512" for i in m["icons"])
@@ -367,6 +394,40 @@ def main():
             expect(drawer).to_be_hidden()
             return "picking a preset fills the port; a second pick replaces it cleanly"
         check("UI-PRESET", "Service preset fills protocol and port in the new-forward form", preset)
+
+        def preset_udp():
+            page.goto(URL + "/#/")
+            page.reload()   # fresh form state: the shared page would keep the last preset's values
+            page.get_by_role("button", name="New forward").first.click()
+            drawer = page.get_by_role("dialog", name="New forward")
+            expect(drawer).to_be_visible()
+            # The active segment has bg-white; inactive ones only have hover:text-ink-900, so don't match on text colour.
+            seg = lambda t: drawer.locator("button", has_text=re.compile(rf"^{t}$"))
+            drawer.get_by_label("Service preset").select_option("wireguard")
+            expect(drawer.get_by_placeholder("e.g. 3389")).to_have_value("51820")
+            expect(seg("UDP")).to_have_class(re.compile(r"bg-white"))
+            expect(seg("TCP")).not_to_have_class(re.compile(r"bg-white"))
+            drawer.get_by_label("Service preset").select_option("minecraft")   # back to TCP
+            expect(seg("TCP")).to_have_class(re.compile(r"bg-white"))
+            expect(seg("UDP")).not_to_have_class(re.compile(r"bg-white"))
+            page.keyboard.press("Escape")
+            expect(drawer).to_be_hidden()
+            return "a UDP preset sets the protocol to UDP; a TCP preset sets it back to TCP"
+        check("UI-PRESET-UDP", "Preset sets the protocol, not just the port (UDP and back to TCP)", preset_udp)
+
+        def preset_conflict():
+            page.goto(URL + "/#/")
+            page.reload()   # fresh form state: the shared page would keep the last preset's draft
+            page.get_by_role("button", name="New forward").first.click()
+            drawer = page.get_by_role("dialog", name="New forward")
+            expect(drawer).to_be_visible()
+            drawer.get_by_label("Service preset").select_option("rdp")   # 3389 is already the seeded "C - RDP"
+            msg = drawer.get_by_text(re.compile(r"Conflicts with .*C - RDP"))
+            expect(msg).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(drawer).to_be_hidden()
+            return "a preset on a taken port shows the inline conflict error naming the existing forward"
+        check("UI-PRESET-CONFLICT", "Preset on an already-used port shows the inline conflict error", preset_conflict)
 
         def schedule_form():
             page.goto(URL + "/#/")
@@ -425,7 +486,8 @@ def main():
             expect(page.get_by_role("heading", name="Diagnostics")).to_be_visible()
             expect(page.locator("li", has_text="Firewall ruleset syntax")).to_be_visible(timeout=10000)
             rows = page.locator("ul > li")
-            expect(rows).to_have_count(10, timeout=10000)
+            expect(rows).to_have_count(11, timeout=10000)
+            expect(page.locator("li", has_text="Live rules match the configuration")).to_be_visible(timeout=10000)
             expect(page.get_by_text("Everything checks out.")).to_be_visible()
             page.get_by_role("button", name="Run again").click()
             expect(page.get_by_text("Everything checks out.")).to_be_visible(timeout=10000)

@@ -13,4 +13,6 @@ export const SERVICE_PRESETS: ServicePreset[] = [
   { id: "homeassistant", label: "Home Assistant", protocol: "tcp", port: 8123 },
   { id: "plex", label: "Plex", protocol: "tcp", port: 32400 },
   { id: "minecraft", label: "Minecraft", protocol: "tcp", port: 25565 },
+  { id: "wireguard", label: "WireGuard VPN", protocol: "udp", port: 51820 },
+  { id: "minecraft-bedrock", label: "Minecraft Bedrock", protocol: "udp", port: 19132 },
 ];

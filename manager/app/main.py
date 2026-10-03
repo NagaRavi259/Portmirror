@@ -251,7 +251,7 @@ async def audit(limit: int = Query(200, le=1000), before: int | None = None, _: 
 
 @app.get("/api/export/audit.csv")
 async def export_audit_csv(_: str = Depends(who)):
-    body = csvexport.audit_csv(store.audit_log(limit=100_000))
+    body = csvexport.UTF8_BOM + csvexport.audit_csv(store.audit_log(limit=100_000))
     return Response(body, media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="portmirror-audit.csv"'})
 
@@ -260,7 +260,7 @@ async def export_audit_csv(_: str = Depends(who)):
 async def export_history_csv(forward_id: int = Query(0, ge=0), range: str = Query("all", pattern=RANGE_RE),
                              _: str = Depends(who)):
     h = collector.history(forward_id, range)
-    body = csvexport.history_csv(h["points"], h.get("step_s"))
+    body = csvexport.UTF8_BOM + csvexport.history_csv(h["points"], h.get("step_s"))
     name = f"portmirror-history-{'all' if forward_id == 0 else f'forward-{forward_id}'}-{range}.csv"
     return Response(body, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 

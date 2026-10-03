@@ -26,6 +26,11 @@ def cell(v) -> str:
     return s
 
 
+# Excel on Windows reads a CSV without a byte-order mark as the local ANSI code page, which turns accented
+# and curly-quote text into mojibake. The BOM tells it UTF-8; LibreOffice and other readers ignore it.
+UTF8_BOM = "\ufeff"
+
+
 def to_csv(headers: list[str], rows: list[list]) -> str:
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")

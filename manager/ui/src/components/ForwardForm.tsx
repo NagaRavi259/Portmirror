@@ -212,6 +212,7 @@ export function ForwardForm({ forward, all, system, onClose, onSaved }: {
                 set("listen", String(p.port));
                 set("useRange", false);
                 set("listenEnd", "");
+                setTouched((t) => ({ ...t, listen: true }));   // so a taken port shows its conflict straight away
               }}>
               <option value="">Choose a preset…</option>
               {SERVICE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label} · :{p.port}</option>)}

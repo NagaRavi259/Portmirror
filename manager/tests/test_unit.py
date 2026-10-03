@@ -409,6 +409,9 @@ def test_apply_works_under_uvloop():
     running loop is uvloop - what both the Docker image and a native (non-Docker)
     deployment actually use, since both install uvicorn[standard]."""
     uvloop = pytest.importorskip("uvloop")
+    # Use a scratch table: this test must never touch the live `ip pm` table, which carries real forwards.
+    # (Applying [] to `pm` here used to clear every forward for up to 5 s on each test run.)
+    live_table, engine.T = engine.T, "pmtest_unit"
 
     async def go():
         await engine.apply([fwd(9001, listen_port=25999)])
@@ -422,6 +425,8 @@ def test_apply_works_under_uvloop():
         asyncio.run(go())
     finally:
         asyncio.set_event_loop_policy(old_policy)
+        engine.T = live_table
+        subprocess.run(["nft", "delete", "table", "ip", "pmtest_unit"], capture_output=True)
 
 
 # ---- interface state (operstate vs. carrier fallback) -----------------------------
@@ -682,6 +687,27 @@ def test_iface_status():
     assert diag.iface_status("unknown")[0] == "fail"   # no silent pass on an unreadable state
 
 
+def test_vpn_route_status_requires_the_vpn_interface():
+    from app import diag
+    good = "10.0.0.1 dev vpn0 src 10.0.0.88 uid 0"
+    assert diag.vpn_route_status(0, good, "", "vpn0")[0] == "ok"
+    # vpn0 down: the default route catches the VPN network via LAN - must not pass
+    via_lan = "10.0.0.1 via 192.168.88.1 dev lan0 src 192.168.88.8 uid 0"
+    status, detail = diag.vpn_route_status(0, via_lan, "", "vpn0")
+    assert status == "fail" and "not vpn0" in detail
+    status, detail = diag.vpn_route_status(1, "", "RTNETLINK answers: Network is unreachable", "vpn0")
+    assert status == "fail" and "unreachable" in detail
+
+
+def test_rules_match_status_flags_any_mismatch():
+    from app import diag
+    assert diag.rules_match_status(14, 14)[0] == "ok"
+    assert diag.rules_match_status(0, 14)[0] == "fail"       # table flushed behind our back
+    assert diag.rules_match_status(13, 14)[0] == "fail"      # one rule lost
+    assert diag.rules_match_status(15, 14)[0] == "fail"      # stray rule added
+    assert "kernel has 0" in diag.rules_match_status(0, 14)[1]
+
+
 def test_target_health_status():
     from app import diag
     assert diag.target_health_status([]) == ("skip", "no enabled forwards to probe")
@@ -707,7 +733,7 @@ def test_diag_run_produces_every_expected_check(store):
 
     checks = asyncio.run(diag.run(manager, collector, prober))
     ids = {c["id"] for c in checks}
-    assert ids == {"nft_syntax", "kernel_table", "vpn_route", "lan_iface", "vpn_iface",
+    assert ids == {"nft_syntax", "kernel_table", "kernel_matches", "vpn_route", "lan_iface", "vpn_iface",
                    "conntrack", "disk", "memory", "target_health", "restarts"}
     for c in checks:
         assert c["status"] in ("ok", "warn", "fail", "skip"), c
