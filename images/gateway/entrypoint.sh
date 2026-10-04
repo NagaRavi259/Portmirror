@@ -28,7 +28,9 @@ fi
 
 cd /opt/pm || exit 1
 while true; do
-  python3 -m uvicorn app.main:app --host 0.0.0.0 --port "${PM_UI_PORT:-8088}" --no-access-log --log-level warning &
+  # HTTPS flags come from the saved switch state, so a restart picks up an HTTPS change or a revert
+  TLS_FLAGS="$(python3 -m app.tls flags | tr '\n' ' ')"
+  python3 -m uvicorn app.main:app --host 0.0.0.0 --port "${PM_UI_PORT:-8088}" --no-access-log --log-level warning $TLS_FLAGS &
   MPID=$!
   wait $MPID
   echo "manager exited (rc=$?) - restarting in 2s; forwarding continues in the kernel"

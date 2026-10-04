@@ -1,4 +1,4 @@
-import { Radio, Search } from "lucide-react";
+import { Download, Radio, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ClientLabel } from "../components/ClientLabel";
 import { Card, Empty, ProtoBadge, Segmented, Spinner, StatusDot, cx } from "../components/ui";
@@ -79,6 +79,13 @@ export function Connections({ forwards, deviceNames, onDeviceNamesChanged }: {
             <input className="input h-9 pl-8" placeholder="Client IP…" value={clientFilter}
               onChange={(e) => setClientFilter(e.target.value)} aria-label="Filter by client IP" />
           </div>
+          <a className="btn-outline h-9" download
+            href={`/api/export/connections.csv?${new URLSearchParams([
+              ...(forwardFilter === "" ? [] : [["forward_id", String(forwardFilter)]]),
+              ...(clientFilter.trim() ? [["client_ip", clientFilter.trim()]] : []),
+            ]).toString()}`}>
+            <Download size={15} /> Export CSV
+          </a>
         </div>
       )}
 

@@ -229,7 +229,8 @@ and on each forward's History panel.
 - [x] Opened in LibreOffice - verified with headless LibreOffice Calc: the CSV converts with accented and curly-quote
   text intact. Found and fixed: no byte-order mark, which makes Excel on Windows misread non-ASCII text; the export now
   starts with a UTF-8 BOM (e2e `UI-CSV` checks it)
-- [ ] Opened in Excel on Windows - not available in this environment; the BOM is in place for it
+- [x] Opened in Excel - verified by the user on Excel: text and layout correct with the BOM in place
+- [x] Connections page has an Export CSV button that exports the current forward and client filters (e2e `UI-CONN-EXPORT`)
 - [x] Large export completes - audit export capped at 100,000 rows; the live run returned 501 rows quickly
 
 ### [x] 9. Readable audit-log diffs — all test cases passed

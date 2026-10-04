@@ -360,6 +360,11 @@ class Store:
                 "WHERE fid=? AND proto=? AND client_ip=? AND client_port=? AND started_at=? AND ended_at IS NULL",
                 rows)
 
+    def open_connections(self) -> list[dict]:
+        """Rows still open - from this process or from one that stopped before closing them."""
+        return self._q("SELECT fid, proto, client_ip, client_port, started_at, bytes_in, bytes_out, pkts_in, pkts_out "
+                       "FROM connection_log WHERE ended_at IS NULL")
+
     def close_orphaned_connections(self, ended_at_iso: str) -> int:
         """On startup: any row still open belongs to a process life that ended without closing it
         (a crash or an unclean stop) - close it now so it doesn't stay "open" forever. Its byte

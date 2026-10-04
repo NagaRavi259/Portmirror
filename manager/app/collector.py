@@ -72,9 +72,11 @@ class Collector:
         self.version = 0   # bumped by the manager when forwards change
         self.open_sessions: dict[tuple, dict] = {}   # (fid, proto, src, sport) -> connection_log bookkeeping
         self.closed_keys: set[tuple] = set()   # already logged as closed but still lingering in conntrack (e.g. TIME_WAIT)
-        n = self.store.close_orphaned_connections(datetime.now(timezone.utc).isoformat())
-        if n:
-            log.warning("closed %d connection-log rows left open by a previous run (likely a crash)", n)
+        # Rows left open by a previous process are adopted by the first tick if their connection is still
+        # there - a restart must not split one live session into two rows. Any not seen by that tick ended
+        # while the manager was down, and are closed then with their last recorded byte counts.
+        self._adopt: dict[tuple, dict] = {(r["fid"], r["proto"], r["client_ip"], r["client_port"]): r
+                                          for r in self.store.open_connections()}
         self.last_conn_purge = 0.0
 
     # ------------------------------------------------------------------
@@ -292,6 +294,11 @@ class Collector:
             if key in self.closed_keys:
                 continue   # already logged as closed; just lingering in conntrack (e.g. TIME_WAIT)
             existing = self.open_sessions.get(key)
+            if existing is None and key in self._adopt:
+                row = self._adopt.pop(key)   # the same connection, seen again after a restart: keep its row
+                self.open_sessions[key] = {"started_at": row["started_at"], "bytes_in": fl.bytes_in,
+                                           "bytes_out": fl.bytes_out, "pkts_in": fl.pkts_in, "pkts_out": fl.pkts_out}
+                continue
             if existing is None:
                 self.open_sessions[key] = {"started_at": now_iso, "bytes_in": fl.bytes_in,
                                            "bytes_out": fl.bytes_out, "pkts_in": fl.pkts_in, "pkts_out": fl.pkts_out}
@@ -310,6 +317,11 @@ class Collector:
             closes.append((bi, bo, pi, po, now_iso, fid, proto, src, sport, s["started_at"]))
             self.closed_keys.add(key)
         self.closed_keys &= all_flows.keys()   # drop keys that have fully vanished from conntrack
+        if self._adopt:   # rows from before the restart whose connection is gone: they ended while we were down
+            for key, r in self._adopt.items():
+                closes.append((r["bytes_in"], r["bytes_out"], r["pkts_in"], r["pkts_out"], now_iso,
+                               key[0], key[1], key[2], key[3], r["started_at"]))
+            self._adopt.clear()
         try:
             self.store.record_connection_opens(opens)
             self.store.record_connection_closes(closes)

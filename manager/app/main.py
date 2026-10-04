@@ -2,15 +2,19 @@
 import asyncio
 import ipaddress
 import logging
+import os
+import signal
 from contextlib import asynccontextmanager
+from typing import Optional
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from starlette.websockets import WebSocketState
 
-from . import config, diag, engine
+from . import access, config, diag, engine, tls
 from . import export as csvexport
 from .auth import COOKIE, Auth
 from .collector import Collector
@@ -48,7 +52,11 @@ async def lifespan(app: FastAPI):
         await manager.reapply("system", "manager.start")
     except engine.NftError as e:
         log.error("initial apply failed: %s", e)
-    tasks = [asyncio.create_task(c) for c in (collector.run(), prober.run(), manager.housekeeping_loop())]
+    try:
+        await _apply_access(access.load())
+    except Exception as e:  # noqa: BLE001 - a missing firewall tool must not stop the dashboard from starting
+        log.error("dashboard access rule not applied: %s", e)
+    tasks = [asyncio.create_task(c) for c in (collector.run(), prober.run(), manager.housekeeping_loop(), _tls_watchdog())]
     log.info("manager ready on :%s with %d forwards", config.UI_PORT, len(manager.forwards()))
     yield
     for t in tasks:
@@ -265,6 +273,16 @@ async def export_history_csv(forward_id: int = Query(0, ge=0), range: str = Quer
     return Response(body, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@app.get("/api/export/connections.csv")
+async def export_connections_csv(forward_id: int | None = None, client_ip: str | None = None,
+                                 since: str | None = None, _: str = Depends(who)):
+    rows = store.connection_log(forward_id=forward_id, client_ip=client_ip, since=since, limit=100_000)
+    names = {f.id: f.name for f in manager.forwards()}
+    body = csvexport.UTF8_BOM + csvexport.connections_csv(rows, names)
+    return Response(body, media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="portmirror-connections.csv"'})
+
+
 @app.get("/api/connection-log")
 async def connection_log(forward_id: int | None = None, client_ip: str | None = None, since: str | None = None,
                          limit: int = Query(200, le=1000), before: int | None = None, _: str = Depends(who)):
@@ -288,6 +306,132 @@ async def export(_: str = Depends(who)):
 @app.post("/api/import")
 async def import_(body: ImportIn, actor: str = Depends(who)):
     return await manager.import_forwards(body.forwards, body.mode, actor)
+
+
+# ---- HTTPS -------------------------------------------------------------------------------------
+# A scheme change restarts the manager; the entrypoint restarts it on the new scheme. Until the
+# operator confirms, the switch can be undone: the watchdog reverts it when the time runs out.
+
+async def _restart_manager():
+    await asyncio.sleep(1.0)            # let the response reach the browser first
+    os.kill(os.getpid(), signal.SIGTERM)  # the entrypoint's supervisor starts it again in ~2 s
+
+
+async def _tls_watchdog():
+    while True:
+        await asyncio.sleep(1)
+        state = tls.load_state()
+        if tls.overdue(state, datetime.now(timezone.utc)):
+            tls.save_state(tls.revert(state))
+            store.audit("system", "tls.reverted", "", {"reason": "not confirmed in time"})
+            log.warning("HTTPS change not confirmed in time - reverting")
+            await _restart_manager()
+            return
+
+
+class TlsCertIn(BaseModel):
+    cert_pem: str
+    key_pem: str
+    ca_pem: Optional[str] = None
+
+
+class TlsSwitchIn(BaseModel):
+    enabled: bool
+
+
+def _tls_view(state: dict) -> dict:
+    now = datetime.now(timezone.utc)
+    return {"enabled": state["enabled"], "pending": state["pending"] is not None,
+            "seconds_left": tls.seconds_left(state, now), "confirm_seconds": tls.CONFIRM_SECONDS,
+            "has_certificate": tls.has_certificate(), "has_ca": tls.CA_FILE.exists()}
+
+
+@app.get("/api/tls")
+async def tls_status(_: str = Depends(who)):
+    return _tls_view(tls.load_state())
+
+
+@app.post("/api/tls/certificate")
+async def tls_certificate(body: TlsCertIn, actor: str = Depends(who)):
+    try:
+        tls.store_certificate(body.cert_pem, body.key_pem, body.ca_pem)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    store.audit(actor, "tls.certificate_uploaded")
+    return _tls_view(tls.load_state())
+
+
+@app.post("/api/tls/switch")
+async def tls_switch(body: TlsSwitchIn, background: BackgroundTasks, actor: str = Depends(who)):
+    if body.enabled and not tls.has_certificate():
+        raise HTTPException(409, "upload a certificate and key first")
+    state = tls.begin_switch(tls.load_state(), body.enabled, datetime.now(timezone.utc))
+    tls.save_state(state)
+    store.audit(actor, "tls.enable" if body.enabled else "tls.disable", "",
+                {"confirm_seconds": tls.CONFIRM_SECONDS})
+    background.add_task(_restart_manager)
+    return _tls_view(state)
+
+
+@app.post("/api/tls/confirm")
+async def tls_confirm(actor: str = Depends(who)):
+    state = tls.load_state()
+    if state["pending"] is None:
+        raise HTTPException(409, "nothing to confirm")
+    state = tls.confirm(state)
+    tls.save_state(state)
+    store.audit(actor, "tls.confirmed")
+    return _tls_view(state)
+
+
+@app.post("/api/tls/revert")
+async def tls_revert(background: BackgroundTasks, actor: str = Depends(who)):
+    state = tls.load_state()
+    if state["pending"] is None:
+        raise HTTPException(409, "nothing to revert")
+    state = tls.revert(state)
+    tls.save_state(state)
+    store.audit(actor, "tls.reverted", "", {"reason": "reverted by operator"})
+    background.add_task(_restart_manager)
+    return _tls_view(state)
+
+
+@app.get("/api/tls/ca")
+async def tls_ca():
+    # the CA certificate is public: the phone fetches it over plain HTTP before the switch to HTTPS
+    if not tls.CA_FILE.exists():
+        raise HTTPException(404, "no CA certificate uploaded")
+    return Response(tls.CA_FILE.read_bytes(), media_type="application/x-x509-ca-cert",
+                    headers={"Content-Disposition": 'attachment; filename="portmirror-ca.crt"'})
+
+
+# ---- dashboard access over the VPN side ----------------------------------------------------------
+async def _apply_access(state: dict) -> None:
+    script = access.rules_script(state["ui_over_vpn"], config.VPN_IF, config.UI_PORT)
+    rc, _, err = await engine.run("nft", "-f", "-", stdin=script)
+    if rc != 0:
+        raise engine.NftError(engine._clean(err) or "nft rejected the access rule")
+
+
+class AccessIn(BaseModel):
+    ui_over_vpn: bool
+
+
+@app.get("/api/access")
+async def access_get(_: str = Depends(who)):
+    return {**access.load(), "vpn_interface": config.VPN_IF, "port": config.UI_PORT}
+
+
+@app.put("/api/access")
+async def access_put(body: AccessIn, actor: str = Depends(who)):
+    state = {"ui_over_vpn": body.ui_over_vpn}
+    try:
+        await _apply_access(state)
+    except engine.NftError as e:
+        raise HTTPException(500, f"firewall rule could not be applied: {e}")
+    access.save(state)
+    store.audit(actor, "access.ui_over_vpn", "", {"ui_over_vpn": body.ui_over_vpn})
+    return {**state, "vpn_interface": config.VPN_IF, "port": config.UI_PORT}
 
 
 @app.get("/api/tokens")

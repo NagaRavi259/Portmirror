@@ -21,6 +21,8 @@ Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=/etc/portmirror/portmirror.env
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do ip link show "$PM_VPN_IF" >/dev/null 2>&1 && ip link show "$PM_LAN_IF" >/dev/null 2>&1 && exit 0; sleep 1; done; echo "PM_LAN_IF/PM_VPN_IF never appeared" >&2; exit 1'
+# per-connection byte counters: without this every session shows 0 bytes in the connection log
+ExecStartPre=-/sbin/sysctl -w net.netfilter.nf_conntrack_acct=1
 ExecStart=/usr/sbin/nft -f /etc/portmirror/nftables.conf
 ExecStart=/bin/sh -c '[ -f "$PM_STATE_DIR/pm.nft" ] && /usr/sbin/nft -f "$PM_STATE_DIR/pm.nft" || true'
 ExecStop=-/usr/sbin/nft delete table ip pm_nat

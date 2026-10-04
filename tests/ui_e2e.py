@@ -372,6 +372,51 @@ def main():
             finally:
                 if fid is not None:
                     page.request.delete(URL + f"/api/forwards/{fid}?kill=true")
+        def https_settings():
+            page.goto(URL + "/#/settings")
+            page.reload()
+            expect(page.get_by_role("heading", name="HTTPS")).to_be_visible()
+            expect(page.get_by_label("Certificate file", exact=True)).to_be_visible()
+            expect(page.get_by_label("Private key file")).to_be_visible()
+            expect(page.get_by_role("button", name="Upload certificate")).to_be_disabled()   # nothing chosen yet
+            expect(page.get_by_text("Keep the HTTPS change?")).to_have_count(0)            # no change waiting
+            return "HTTPS section shows the certificate inputs; upload stays disabled until both files are chosen"
+        check("UI-HTTPS", "HTTPS settings: certificate inputs, upload disabled until files chosen", https_settings)
+
+        def access_switch():
+            page.goto(URL + "/#/settings")
+            page.reload()
+            sw = page.get_by_role("switch", name="Allow dashboard over VPN")
+            expect(sw).to_be_enabled(timeout=10000)          # disabled until the current setting has loaded
+            before = sw.get_attribute("aria-checked")
+            try:
+                sw.click()
+                expect(sw).not_to_have_attribute("aria-checked", before, timeout=10000)
+                after = page.request.get(URL + "/api/access").json()["ui_over_vpn"]
+                assert str(after).lower() != before, "switch did not change the saved setting"
+            finally:
+                # always put it back, even if an assertion above failed
+                expect(sw).to_be_enabled(timeout=10000)
+                if sw.get_attribute("aria-checked") != before:
+                    sw.click()
+                expect(sw).to_have_attribute("aria-checked", before, timeout=10000)
+            return f"switch flips the saved setting ({before} -> {str(after).lower()}) and restores it"
+        check("UI-ACCESS", "Dashboard access switch changes the saved setting and back", access_switch)
+
+        def connections_export():
+            page.goto(URL + "/#/connections")
+            page.reload()
+            link = page.get_by_role("link", name="Export CSV")
+            expect(link).to_be_visible(timeout=10000)
+            href = link.get_attribute("href")
+            r = page.request.get(URL + href)
+            assert r.status == 200, r.status
+            assert r.headers["content-type"].startswith("text/csv"), r.headers["content-type"]
+            assert "attachment" in r.headers["content-disposition"]
+            assert r.text().lstrip("\ufeff").splitlines()[0].startswith("started_utc,ended_utc,status,forward")
+            return f"Export CSV link returns a CSV attachment ({href.split('?')[0]})"
+        check("UI-CONN-EXPORT", "Connections page exports the connection log as CSV", connections_export)
+
         check("UI-AUDIT-MULTI", "Several fields changed in one save all show in the audit diff", audit_diff_many)
 
         def pwa():
@@ -486,8 +531,9 @@ def main():
             expect(page.get_by_role("heading", name="Diagnostics")).to_be_visible()
             expect(page.locator("li", has_text="Firewall ruleset syntax")).to_be_visible(timeout=10000)
             rows = page.locator("ul > li")
-            expect(rows).to_have_count(11, timeout=10000)
+            expect(rows).to_have_count(12, timeout=10000)
             expect(page.locator("li", has_text="Live rules match the configuration")).to_be_visible(timeout=10000)
+            expect(page.locator("li", has_text="Per-connection byte counters")).to_be_visible(timeout=10000)
             expect(page.get_by_text("Everything checks out.")).to_be_visible()
             page.get_by_role("button", name="Run again").click()
             expect(page.get_by_text("Everything checks out.")).to_be_visible(timeout=10000)

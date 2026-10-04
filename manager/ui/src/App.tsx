@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TlsBanner } from "./components/TlsBanner";
 import { ForwardForm } from "./components/ForwardForm";
 import { RemoveDialog } from "./components/RemoveDialog";
 import { Shell } from "./components/Shell";
@@ -108,6 +109,7 @@ export default function App() {
   return (
     <Shell route={route} link={link} global={snap?.global} system={system} user={auth.user}
       onLogout={async () => { await Api.logout().catch(() => {}); setAuth({ state: "anon" }); }}>
+      <TlsBanner />
       {auth.mustChange && route.page !== "settings" && (
         <a href="#/settings" className="mb-6 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 hover:bg-amber-100/70">
           <b>Security:</b> you're using the generated initial password — set your own in Settings →

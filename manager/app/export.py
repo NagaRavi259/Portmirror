@@ -49,3 +49,13 @@ def history_csv(points: list[dict], step_s: int | None) -> str:
     return to_csv(["time_utc", "bucket_seconds", "new_per_second", "in_bps", "out_bps", "live_max"],
                   [[datetime.fromtimestamp(p["t"], timezone.utc).isoformat(), step_s, p.get("new_per_s"), p.get("in_bps"), p.get("out_bps"), p.get("live")]
                    for p in points])
+
+
+def connections_csv(rows: list[dict], names: dict[int, str]) -> str:
+    """One row per real connection. Open sessions have an empty end time and status "open"."""
+    headers = ["started_utc", "ended_utc", "status", "forward", "protocol", "client_ip", "client_port",
+               "target_ip", "target_port", "bytes_in", "bytes_out", "packets_in", "packets_out"]
+    return to_csv(headers, [[r["started_at"], r["ended_at"] or "", "open" if r["ended_at"] is None else "closed",
+                             names.get(r["fid"], f"#{r['fid']}"), r["proto"], r["client_ip"], r["client_port"],
+                             r["target_ip"], r["target_port"], r["bytes_in"], r["bytes_out"],
+                             r["pkts_in"], r["pkts_out"]] for r in rows])

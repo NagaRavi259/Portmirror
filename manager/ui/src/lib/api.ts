@@ -138,6 +138,13 @@ export interface Notification {
   message: string; context: Record<string, unknown> | null; state: NotificationState;
 }
 
+export interface AccessStatus { ui_over_vpn: boolean; vpn_interface: string; port: number }
+
+export interface TlsStatus {
+  enabled: boolean; pending: boolean; seconds_left: number; confirm_seconds: number;
+  has_certificate: boolean; has_ca: boolean;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public fields: Record<string, string> = {}) {
     super(message);
@@ -227,6 +234,14 @@ export const Api = {
     api<{ unread: number; items: Notification[]; muted: string[] }>("GET", `/api/notifications${state ? `?state=${state}` : ""}`),
   markAllNotificationsRead: () => api("POST", "/api/notifications/read-all"),
   setNotificationState: (id: number, state: NotificationState) => api("POST", `/api/notifications/${id}/state`, { state }),
+  access: () => api<AccessStatus>("GET", "/api/access"),
+  setAccess: (ui_over_vpn: boolean) => api<AccessStatus>("PUT", "/api/access", { ui_over_vpn }),
+  tls: () => api<TlsStatus>("GET", "/api/tls"),
+  tlsCertificate: (cert_pem: string, key_pem: string, ca_pem?: string) =>
+    api<TlsStatus>("POST", "/api/tls/certificate", { cert_pem, key_pem, ca_pem: ca_pem || null }),
+  tlsSwitch: (enabled: boolean) => api<TlsStatus>("POST", "/api/tls/switch", { enabled }),
+  tlsConfirm: () => api<TlsStatus>("POST", "/api/tls/confirm"),
+  tlsRevert: () => api<TlsStatus>("POST", "/api/tls/revert"),
   muteNotificationType: (type: string) => api("POST", `/api/notifications/mute/${type}`),
   unmuteNotificationType: (type: string) => api("DELETE", `/api/notifications/mute/${type}`),
 };

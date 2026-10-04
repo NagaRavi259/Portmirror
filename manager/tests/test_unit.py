@@ -590,11 +590,34 @@ def test_collector_tracks_two_concurrent_clients_independently(store):
 
 
 def test_collector_closes_orphaned_sessions_on_startup(store):
+    """A row left open by a process that stopped is closed by the first tick if its connection is gone."""
     from app.collector import Collector
     store.record_connection_opens([(1, "tcp", "1.2.3.4", 1, "10.0.0.12", 80, "2020-01-01T00:00:00+00:00")])
-    Collector(store, lambda: [], type("P", (), {"status": {}})())   # constructing it runs the sweep
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+    assert store.connection_log(forward_id=1)[0]["ended_at"] is None   # not closed blindly at startup any more
+    c._track_connection_log({}, time.time())                          # first tick: that connection isn't there
     rows = store.connection_log(forward_id=1)
     assert rows[0]["ended_at"] is not None
+
+
+def test_collector_continues_a_live_session_across_a_restart(store):
+    """Regression test: after a manager restart, a connection still live in conntrack must keep its
+    existing row and start time. Previously every restart closed the row and opened a second one for
+    the same session (seen on the Pi as RDP and Jellyfin sessions splitting at each manager start)."""
+    from app.collector import Collector
+    c = Collector(store, lambda: [], type("P", (), {"status": {}})())
+    c._track_connection_log({1: [_flow(state="ESTABLISHED", bytes_in=100, bytes_out=200)]}, time.time())
+    original = store.connection_log(forward_id=1)[0]
+
+    restarted = Collector(store, lambda: [], type("P", (), {"status": {}})())   # a fresh process, same database
+    restarted._track_connection_log({1: [_flow(state="ESTABLISHED", bytes_in=400, bytes_out=800)]}, time.time())
+    rows = store.connection_log(forward_id=1)
+    assert len(rows) == 1, "the same live session must not be split into a second row"
+    assert rows[0]["ended_at"] is None and rows[0]["started_at"] == original["started_at"]
+
+    restarted._track_connection_log({}, time.time())   # now it really ends
+    rows = store.connection_log(forward_id=1)
+    assert rows[0]["ended_at"] is not None and (rows[0]["bytes_in"], rows[0]["bytes_out"]) == (400, 800)
 
 
 def test_collector_closes_session_on_time_wait_not_waiting_for_conntrack_removal(store):
@@ -734,7 +757,7 @@ def test_diag_run_produces_every_expected_check(store):
     checks = asyncio.run(diag.run(manager, collector, prober))
     ids = {c["id"] for c in checks}
     assert ids == {"nft_syntax", "kernel_table", "kernel_matches", "vpn_route", "lan_iface", "vpn_iface",
-                   "conntrack", "disk", "memory", "target_health", "restarts"}
+                   "conntrack", "conntrack_acct", "disk", "memory", "target_health", "restarts"}
     for c in checks:
         assert c["status"] in ("ok", "warn", "fail", "skip"), c
         assert c["label"] and c["detail"]
@@ -872,3 +895,118 @@ def test_collector_reports_current_minute_bytes_without_creating_state(store):
     c.acc[9][2] = 450
     assert c.current_minute_bytes(9) == 750
 
+
+
+# ---- HTTPS switch: confirm within a time limit or revert ------------------------------------
+def test_tls_switch_is_pending_and_remembers_the_previous_scheme():
+    from datetime import datetime, timedelta, timezone
+    from app import tls
+    t0 = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    s = tls.begin_switch({"enabled": False, "pending": None}, True, t0)
+    assert s["enabled"] is True
+    assert s["pending"]["previous"] is False
+    assert datetime.fromisoformat(s["pending"]["deadline"]) == t0 + timedelta(seconds=60)
+    assert tls.seconds_left(s, t0 + timedelta(seconds=20)) == 40
+
+
+def test_tls_confirm_keeps_the_new_scheme_and_clears_pending():
+    from datetime import datetime, timezone
+    from app import tls
+    t0 = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    s = tls.confirm(tls.begin_switch({"enabled": False, "pending": None}, True, t0))
+    assert s == {"enabled": True, "pending": None}
+    assert tls.overdue(s, t0 + __import__("datetime").timedelta(hours=1)) is False
+
+
+def test_tls_unconfirmed_switch_reverts_only_after_the_limit():
+    from datetime import datetime, timedelta, timezone
+    from app import tls
+    t0 = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    s = tls.begin_switch({"enabled": False, "pending": None}, True, t0)
+    assert tls.overdue(s, t0 + timedelta(seconds=59)) is False      # still within the minute
+    assert tls.overdue(s, t0 + timedelta(seconds=60)) is True       # the limit is reached
+    assert tls.revert(s) == {"enabled": False, "pending": None}     # back to what it was
+
+
+def test_tls_revert_of_an_https_to_http_change_goes_back_to_https():
+    from datetime import datetime, timezone
+    from app import tls
+    t0 = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    s = tls.begin_switch({"enabled": True, "pending": None}, False, t0)
+    assert tls.revert(s) == {"enabled": True, "pending": None}
+
+
+def test_tls_flags_need_both_enabled_and_a_stored_certificate(tmp_path, monkeypatch):
+    from app import tls
+    monkeypatch.setattr(tls, "TLS_DIR", tmp_path)
+    monkeypatch.setattr(tls, "CERT_FILE", tmp_path / "cert.pem")
+    monkeypatch.setattr(tls, "KEY_FILE", tmp_path / "key.pem")
+    assert tls.uvicorn_flags({"enabled": True, "pending": None}) == []   # enabled but no certificate yet
+    (tmp_path / "cert.pem").write_text("x"); (tmp_path / "key.pem").write_text("x")
+    assert tls.uvicorn_flags({"enabled": True, "pending": None}) == [
+        "--ssl-certfile", str(tmp_path / "cert.pem"), "--ssl-keyfile", str(tmp_path / "key.pem")]
+    assert tls.uvicorn_flags({"enabled": False, "pending": None}) == []
+
+
+def test_tls_rejects_non_pem_and_mismatched_pairs(tmp_path):
+    import shutil, subprocess
+    import pytest
+    from app import tls
+    with pytest.raises(ValueError):
+        tls.validate_pair("not a cert", "not a key")
+    if not shutil.which("openssl"):
+        pytest.skip("needs openssl to make a certificate pair")
+    def make(name):
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+                        "-keyout", str(tmp_path / f"{name}.key"), "-out", str(tmp_path / f"{name}.pem"),
+                        "-subj", "/CN=test"], check=True, capture_output=True)
+        return (tmp_path / f"{name}.pem").read_text(), (tmp_path / f"{name}.key").read_text()
+    cert_a, key_a = make("a")
+    cert_b, key_b = make("b")
+    tls.validate_pair(cert_a, key_a)                       # a matching pair loads
+    with pytest.raises(ValueError):
+        tls.validate_pair(cert_a, key_b)                   # the key belongs to a different certificate
+
+
+# ---- dashboard access over the VPN side ------------------------------------------------------------
+def test_access_rules_block_only_when_disallowed():
+    from app import access
+    blocked = access.rules_script(False, "tailscale0", 8088)
+    assert "iifname \"tailscale0\" tcp dport 8088 counter drop" in blocked
+    assert blocked.startswith("add table inet pm_ui\ndelete table inet pm_ui\n")   # idempotent on any state
+    allowed = access.rules_script(True, "tailscale0", 8088)
+    assert "drop" not in allowed and "chain" not in allowed                       # allowed = no rule at all
+    assert allowed.startswith("add table inet pm_ui\ndelete table inet pm_ui\n")
+
+
+def test_access_setting_defaults_to_allowed_and_round_trips(tmp_path):
+    from app import access
+    p = tmp_path / "access.json"
+    assert access.load(p) == {"ui_over_vpn": True}                  # default: option 2, reachable over the VPN
+    access.save({"ui_over_vpn": False}, p)
+    assert access.load(p) == {"ui_over_vpn": False}
+
+
+def test_acct_status_warns_when_byte_counters_are_off():
+    from app import diag
+    assert diag.acct_status("1\n")[0] == "ok"
+    status, detail = diag.acct_status("0\n")
+    assert status == "warn" and "sysctl -w net.netfilter.nf_conntrack_acct=1" in detail
+    assert diag.acct_status(None)[0] == "skip"
+
+
+def test_connections_csv_rows_and_open_status():
+    from app import export
+    rows = [
+        {"fid": 1, "started_at": "2026-10-03T10:00:00+00:00", "ended_at": None, "proto": "tcp",
+         "client_ip": "192.168.88.9", "client_port": 65451, "target_ip": "192.168.0.112", "target_port": 3389,
+         "bytes_in": 0, "bytes_out": 0, "pkts_in": 0, "pkts_out": 0},
+        {"fid": 2, "started_at": "2026-10-03T09:00:00+00:00", "ended_at": "2026-10-03T09:05:00+00:00",
+         "proto": "udp", "client_ip": "192.168.88.7", "client_port": 5000, "target_ip": "10.0.0.14", "target_port": 9000,
+         "bytes_in": 120, "bytes_out": 300, "pkts_in": 2, "pkts_out": 3},
+    ]
+    text = export.connections_csv(rows, {1: "=RDP 112", 2: "DNS"})
+    lines = text.splitlines()
+    assert lines[0] == "started_utc,ended_utc,status,forward,protocol,client_ip,client_port,target_ip,target_port,bytes_in,bytes_out,packets_in,packets_out"
+    assert lines[1].startswith("2026-10-03T10:00:00+00:00,,open,'=RDP 112,tcp,192.168.88.9,65451,")   # open: empty end; formula neutralised
+    assert lines[2] == "2026-10-03T09:00:00+00:00,2026-10-03T09:05:00+00:00,closed,DNS,udp,192.168.88.7,5000,10.0.0.14,9000,120,300,2,3"

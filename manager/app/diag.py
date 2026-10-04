@@ -54,6 +54,15 @@ def memory_status(used_bytes: int, limit_bytes: int) -> tuple[str, str]:
     return "ok", detail
 
 
+def acct_status(value: str | None) -> tuple[str, str]:
+    if value is None:
+        return "skip", "not reported by this kernel"
+    if value.strip() == "1":
+        return "ok", "on - per-connection bytes are recorded"
+    return "warn", ("off - every session's byte count reads 0; turn it on with "
+                    "`sysctl -w net.netfilter.nf_conntrack_acct=1`")
+
+
 def iface_status(state: str) -> tuple[str, str]:
     if state == "up":
         return "ok", "up"
@@ -128,6 +137,15 @@ def _iface_check(id_: str, label: str, name: str) -> dict:
     return _check(id_, label, status, f"{name}: {detail}")
 
 
+def _acct() -> dict:
+    try:
+        value = open("/proc/sys/net/netfilter/nf_conntrack_acct").read()
+    except OSError:
+        value = None
+    status, detail = acct_status(value)
+    return _check("conntrack_acct", "Per-connection byte counters", status, detail)
+
+
 def _conntrack(snapshot: dict) -> dict:
     g = snapshot.get("global", {})
     status, detail = conntrack_status(g.get("conntrack_count", 0), g.get("conntrack_max", 0))
@@ -183,6 +201,7 @@ async def run(manager, collector, prober) -> list[dict]:
         _iface_check("lan_iface", "LAN interface", config.LAN_IF),
         _iface_check("vpn_iface", "VPN interface", config.VPN_IF),
         _conntrack(collector.snapshot),
+        _acct(),
         _disk(),
         _memory(collector.snapshot),
         _target_health(prober),

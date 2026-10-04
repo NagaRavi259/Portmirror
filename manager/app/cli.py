@@ -5,20 +5,29 @@
   pmctl update [check | --yes]   check GitHub for a newer release, or install one
 """
 import json
+import ssl
 import sys
 import urllib.error
 import urllib.request
 
-from . import config
+from . import config, tls
 
 
 def call(method: str, path: str, body=None):
     token = config.INTERNAL_TOKEN_FILE.read_text().strip()
-    req = urllib.request.Request(f"http://127.0.0.1:{config.UI_PORT}{path}", method=method,
+    # follow the dashboard's scheme; the loopback certificate is our own, so it isn't verified here
+    https = tls.load_state()["enabled"] and tls.has_certificate()
+    ctx = None
+    if https:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    scheme = "https" if https else "http"
+    req = urllib.request.Request(f"{scheme}://127.0.0.1:{config.UI_PORT}{path}", method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
             return r.status, json.loads(r.read() or b"null")
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"null")
